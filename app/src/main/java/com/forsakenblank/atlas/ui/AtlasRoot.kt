@@ -127,22 +127,36 @@ fun sectionIcon(section: Section, selected: Boolean): ImageVector = when (sectio
 
 fun AppSettings.visibleTabs(): List<Section> = tabs.filter { it !in hiddenSections }.distinct().ifEmpty { listOf(Section.HOME) }
 
-private fun enterFor(transition: Transition, ms: Int, forward: Boolean): EnterTransition = when (transition) {
-    Transition.SLIDE -> slideInHorizontally(tween(ms)) { if (forward) it else -it / 3 }
-    Transition.FADE -> fadeIn(tween(ms))
-    Transition.ZOOM -> scaleIn(tween(ms), initialScale = if (forward) 0.9f else 1.06f) + fadeIn(tween(ms))
-    Transition.SLIDE_UP -> if (forward) slideInVertically(tween(ms)) { it / 4 } + fadeIn(tween(ms)) else fadeIn(tween(ms))
-    Transition.SHARED_AXIS -> slideInHorizontally(tween(ms)) { (if (forward) it else -it) / 5 } + fadeIn(tween(ms))
-    Transition.NONE -> EnterTransition.None
+// the fades are staged, the screen you are leaving goes first and the new one only starts
+// once it has gone, otherwise both are on screen at once and the old one looks like it is stuck
+private fun fadeOutPart(ms: Int) = (ms * 0.35f).toInt().coerceIn(40, 200)
+
+private fun enterFor(transition: Transition, ms: Int, forward: Boolean): EnterTransition {
+    val gone = fadeOutPart(ms)
+    val rest = (ms - gone).coerceAtLeast(60)
+    val lateFade = fadeIn(tween(rest, delayMillis = gone))
+    return when (transition) {
+        // a full width slide covers the old screen on its own, so it needs no delay
+        Transition.SLIDE -> slideInHorizontally(tween(ms)) { if (forward) it else -it / 3 }
+        Transition.FADE -> lateFade
+        Transition.ZOOM -> scaleIn(tween(rest, delayMillis = gone), initialScale = if (forward) 0.92f else 1.04f) + lateFade
+        Transition.SLIDE_UP -> if (forward) slideInVertically(tween(rest, delayMillis = gone)) { it / 4 } + lateFade else lateFade
+        Transition.SHARED_AXIS -> slideInHorizontally(tween(rest, delayMillis = gone)) { (if (forward) it else -it) / 6 } + lateFade
+        Transition.NONE -> EnterTransition.None
+    }
 }
 
-private fun exitFor(transition: Transition, ms: Int, forward: Boolean): ExitTransition = when (transition) {
-    Transition.SLIDE -> slideOutHorizontally(tween(ms)) { if (forward) -it / 3 else it }
-    Transition.FADE -> fadeOut(tween(ms))
-    Transition.ZOOM -> scaleOut(tween(ms), targetScale = if (forward) 1.06f else 0.9f) + fadeOut(tween(ms))
-    Transition.SLIDE_UP -> if (forward) fadeOut(tween(ms)) else slideOutVertically(tween(ms)) { it / 4 } + fadeOut(tween(ms))
-    Transition.SHARED_AXIS -> slideOutHorizontally(tween(ms)) { (if (forward) -it else it) / 5 } + fadeOut(tween(ms))
-    Transition.NONE -> ExitTransition.None
+private fun exitFor(transition: Transition, ms: Int, forward: Boolean): ExitTransition {
+    val gone = fadeOutPart(ms)
+    val quickFade = fadeOut(tween(gone))
+    return when (transition) {
+        Transition.SLIDE -> slideOutHorizontally(tween(ms)) { if (forward) -it / 3 else it }
+        Transition.FADE -> quickFade
+        Transition.ZOOM -> scaleOut(tween(gone), targetScale = if (forward) 1.04f else 0.92f) + quickFade
+        Transition.SLIDE_UP -> if (forward) quickFade else slideOutVertically(tween(gone)) { it / 4 } + quickFade
+        Transition.SHARED_AXIS -> slideOutHorizontally(tween(gone)) { (if (forward) -it else it) / 6 } + quickFade
+        Transition.NONE -> ExitTransition.None
+    }
 }
 
 // works out which animation a route change gets from the motion settings
