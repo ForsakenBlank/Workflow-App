@@ -11,9 +11,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items as listItems
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -45,11 +51,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.forsakenblank.atlas.data.AtlasRepository
+import com.forsakenblank.atlas.data.ExplorerSort
 import com.forsakenblank.atlas.data.Item
 import com.forsakenblank.atlas.data.ItemType
 import com.forsakenblank.atlas.ui.AtlasNavigator
@@ -59,6 +68,8 @@ import com.forsakenblank.atlas.ui.common.TextInputDialog
 import com.forsakenblank.atlas.ui.common.atlasViewModel
 import com.forsakenblank.atlas.ui.common.icon
 import com.forsakenblank.atlas.ui.common.toItemColor
+import com.forsakenblank.atlas.ui.settings.ConfirmDialog
+import com.forsakenblank.atlas.ui.theme.LocalSettings
 import com.forsakenblank.atlas.ui.track.NewTrackerDialog
 import com.forsakenblank.atlas.util.formatDay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -113,20 +124,36 @@ class ExplorerViewModel(private val repo: AtlasRepository) : ViewModel() {
     }
 }
 
+private fun sortItems(items: List<Item>, sort: ExplorerSort, foldersFirst: Boolean): List<Item> {
+    val byChoice: Comparator<Item> = when (sort) {
+        ExplorerSort.NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+        ExplorerSort.EDITED -> compareByDescending { it.updated }
+        ExplorerSort.CREATED -> compareByDescending { it.created }
+        ExplorerSort.TYPE -> compareBy<Item> { it.type.ordinal }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+    }
+    val order = if (foldersFirst) compareBy<Item> { it.type != ItemType.FOLDER }.then(byChoice) else byChoice
+    return items.sortedWith(order)
+}
+
 private sealed interface ExplorerDialog {
     data object NewFolder : ExplorerDialog
     data object NewTracker : ExplorerDialog
     data class Rename(val item: Item) : ExplorerDialog
     data class Colour(val item: Item) : ExplorerDialog
     data class Move(val item: Item) : ExplorerDialog
+    data class Trash(val item: Item) : ExplorerDialog
 }
 
 @Composable
 fun ExplorerScreen(navigator: AtlasNavigator) {
     val vm = atlasViewModel { ExplorerViewModel(it.repository) }
     val folderId by vm.folderId.collectAsStateWithLifecycle()
-    val children by vm.children.collectAsStateWithLifecycle()
+    val unsorted by vm.children.collectAsStateWithLifecycle()
     val path by vm.path.collectAsStateWithLifecycle()
+    val settings = LocalSettings.current
+    val children = remember(unsorted, settings.explorerSort, settings.foldersFirst) {
+        sortItems(unsorted, settings.explorerSort, settings.foldersFirst)
+    }
     val scope = rememberCoroutineScope()
     var dialog by remember { mutableStateOf<ExplorerDialog?>(null) }
     var addMenu by remember { mutableStateOf(false) }
@@ -134,10 +161,13 @@ fun ExplorerScreen(navigator: AtlasNavigator) {
     BackHandler(enabled = folderId != null) { vm.up() }
 
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
-            item { Breadcrumbs(path, onOpen = vm::open) }
+        LazyVerticalGrid(
+            columns = if (settings.explorerGrid) GridCells.Adaptive(120.dp) else GridCells.Fixed(1),
+            contentPadding = PaddingValues(bottom = 96.dp),
+        ) {
+            item(span = { GridItemSpan(maxLineSpan) }) { Breadcrumbs(path, onOpen = vm::open) }
             if (children.isEmpty()) {
-                item {
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     EmptyState(
                         icon = Icons.Outlined.FolderOpen,
                         title = "This folder is empty",
@@ -148,6 +178,7 @@ fun ExplorerScreen(navigator: AtlasNavigator) {
             items(children, key = { it.id }) { item ->
                 ExplorerRow(
                     item = item,
+                    tile = settings.explorerGrid,
                     onOpen = {
                         when (item.type) {
                             ItemType.FOLDER -> vm.open(item.id)
@@ -158,15 +189,17 @@ fun ExplorerScreen(navigator: AtlasNavigator) {
                     onRename = { dialog = ExplorerDialog.Rename(item) },
                     onColour = { dialog = ExplorerDialog.Colour(item) },
                     onMove = { dialog = ExplorerDialog.Move(item) },
-                    onTrash = { vm.trash(item) },
+                    onTrash = { if (settings.confirmTrash) dialog = ExplorerDialog.Trash(item) else vm.trash(item) },
                 )
             }
             if (folderId == null) {
-                item {
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     ListItem(
                         headlineContent = { Text("Trash") },
-                        supportingContent = { Text("Deleted items are kept for 30 days") },
+                        supportingContent = {
+                            Text(if (settings.trashDays <= 0) "Deleted items stay until you empty it" else "Deleted items are kept for ${settings.trashDays} days")
+                        },
                         leadingContent = { Icon(Icons.Outlined.Delete, contentDescription = null) },
                         modifier = Modifier.clickable { navigator.openTrash() },
                     )
@@ -240,6 +273,12 @@ fun ExplorerScreen(navigator: AtlasNavigator) {
                 dialog = null
             },
         )
+        is ExplorerDialog.Trash -> ConfirmDialog(
+            title = "Move to trash?",
+            body = if (d.item.type == ItemType.FOLDER) "${d.item.name} and everything in it goes to the trash." else "${d.item.name.ifBlank { "This item" }} goes to the trash.",
+            button = "Move to trash",
+            onDismiss = { dialog = null },
+        ) { vm.trash(d.item) }
         is ExplorerDialog.Move -> MoveDialog(
             item = d.item,
             folders = vm.folders.collectAsStateWithLifecycle().value,
@@ -279,6 +318,7 @@ private fun Breadcrumbs(path: List<Item>, onOpen: (Long?) -> Unit) {
 @Composable
 private fun ExplorerRow(
     item: Item,
+    tile: Boolean,
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onColour: () -> Unit,
@@ -293,14 +333,34 @@ private fun ExplorerRow(
         ItemType.TRACKER -> "Tracker"
     }
     Box {
-        ListItem(
-            headlineContent = { Text(item.name.ifBlank { "Untitled" }) },
-            supportingContent = { Text("$kind, edited ${formatDay(item.updated).lowercase()}") },
-            leadingContent = { Icon(item.type.icon(), contentDescription = null, tint = tint) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .combinedClickable(onClick = onOpen, onLongClick = { menu = true }),
-        )
+        if (tile) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(onClick = onOpen, onLongClick = { menu = true })
+                    .padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(item.type.icon(), contentDescription = kind, tint = tint, modifier = Modifier.size(40.dp))
+                Text(
+                    item.name.ifBlank { "Untitled" },
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        } else {
+            ListItem(
+                headlineContent = { Text(item.name.ifBlank { "Untitled" }) },
+                supportingContent = { Text("$kind, edited ${formatDay(item.updated).lowercase()}") },
+                leadingContent = { Icon(item.type.icon(), contentDescription = null, tint = tint) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(onClick = onOpen, onLongClick = { menu = true }),
+            )
+        }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(
                 text = { Text("Rename") },
@@ -340,7 +400,7 @@ private fun MoveDialog(item: Item, folders: List<Item>, onDismiss: () -> Unit, o
                         modifier = Modifier.clickable { onMove(null) },
                     )
                 }
-                items(folders.filter { it.id != item.id }, key = { it.id }) { folder ->
+                listItems(folders.filter { it.id != item.id }, key = { it.id }) { folder ->
                     ListItem(
                         headlineContent = { Text(folder.name) },
                         leadingContent = {

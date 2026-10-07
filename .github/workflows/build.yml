@@ -34,6 +34,17 @@ jobs:
           name: atlas-apk
           path: atlas.apk
 
+      # the apk is uploaded first so a failing test never hides a build you can try
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Keep test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
+
       # main always has a downloadable build at the "latest" release
       - name: Publish latest build
         if: github.ref == 'refs/heads/main'

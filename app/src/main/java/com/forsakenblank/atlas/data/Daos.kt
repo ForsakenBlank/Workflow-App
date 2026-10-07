@@ -16,6 +16,12 @@ data class NoteRow(
     val text: String?,
 )
 
+// one row per tracker per local day that has at least one log
+data class TrackerDay(
+    val trackerId: Long,
+    val day: String,
+)
+
 data class TrackerWithItem(
     @Embedded val item: Item,
     @Relation(parentColumn = "id", entityColumn = "itemId")
@@ -69,11 +75,17 @@ interface ItemDao {
     @Query("DELETE FROM items WHERE id IN (:ids)")
     suspend fun deleteForever(ids: List<Long>)
 
+    @Query("DELETE FROM items WHERE deletedAt IS NOT NULL")
+    suspend fun emptyTrash()
+
     @Query("DELETE FROM items WHERE deletedAt IS NOT NULL AND deletedAt < :before")
     suspend fun purgeTrash(before: Long)
 
     @Query("SELECT * FROM items")
     suspend fun all(): List<Item>
+
+    @Query("SELECT COUNT(*) FROM items")
+    suspend fun count(): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<Item>)
@@ -155,8 +167,14 @@ interface TrackerDao {
     @Query("SELECT * FROM log_entries WHERE timestamp >= :from ORDER BY timestamp")
     fun logsSince(from: Long): Flow<List<LogEntry>>
 
+    @Query("SELECT * FROM log_entries WHERE timestamp >= :from AND timestamp < :to ORDER BY timestamp")
+    fun logsBetween(from: Long, to: Long): Flow<List<LogEntry>>
+
     @Query("SELECT * FROM log_entries WHERE trackerId = :trackerId AND timestamp >= :from ORDER BY timestamp DESC")
     suspend fun logsSinceOnce(trackerId: Long, from: Long): List<LogEntry>
+
+    @Query("SELECT DISTINCT trackerId, date(timestamp / 1000, 'unixepoch', 'localtime') AS day FROM log_entries WHERE timestamp >= :from")
+    fun loggedDays(from: Long): Flow<List<TrackerDay>>
 
     @Query("SELECT * FROM trackers")
     suspend fun all(): List<Tracker>
@@ -208,4 +226,119 @@ interface TagDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(tags: List<Tag>)
+}
+
+@Dao
+interface EventDao {
+    // repeating events can start long before the range, so they are always loaded
+    @Query("SELECT * FROM events WHERE (startsAt < :to AND endsAt >= :from) OR repeatRule != 'NONE' ORDER BY startsAt")
+    fun eventsBetween(from: Long, to: Long): Flow<List<Event>>
+
+    @Query("SELECT * FROM events WHERE id = :id")
+    suspend fun get(id: Long): Event?
+
+    @Upsert
+    suspend fun upsert(event: Event): Long
+
+    @Query("DELETE FROM events WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("SELECT * FROM events")
+    suspend fun all(): List<Event>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(events: List<Event>)
+
+    @Query("DELETE FROM events")
+    suspend fun clear()
+}
+
+@Dao
+interface TaskDao {
+    @Query("SELECT * FROM tasks ORDER BY done, due IS NULL, due, priority DESC, created")
+    fun all(): Flow<List<Task>>
+
+    @Query("SELECT * FROM tasks WHERE done = 0 AND due IS NOT NULL AND due < :before ORDER BY due, priority DESC")
+    fun openDueBefore(before: Long): Flow<List<Task>>
+
+    @Query("SELECT * FROM tasks WHERE due >= :from AND due < :to ORDER BY done, priority DESC")
+    fun dueBetween(from: Long, to: Long): Flow<List<Task>>
+
+    @Query("SELECT * FROM tasks WHERE id = :id")
+    suspend fun get(id: Long): Task?
+
+    @Upsert
+    suspend fun upsert(task: Task): Long
+
+    @Query("DELETE FROM tasks WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM tasks WHERE done = 1")
+    suspend fun clearDone()
+
+    @Query("SELECT * FROM tasks")
+    suspend fun allOnce(): List<Task>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(tasks: List<Task>)
+
+    @Query("DELETE FROM tasks")
+    suspend fun clear()
+}
+
+@Dao
+interface TimetableDao {
+    @Query("SELECT * FROM subjects ORDER BY name COLLATE NOCASE")
+    fun subjects(): Flow<List<Subject>>
+
+    @Query("SELECT * FROM subjects WHERE id = :id")
+    suspend fun subject(id: Long): Subject?
+
+    @Upsert
+    suspend fun upsertSubject(subject: Subject): Long
+
+    @Query("DELETE FROM subjects WHERE id = :id")
+    suspend fun deleteSubject(id: Long)
+
+    @Query("SELECT * FROM timetable_slots ORDER BY dayOfWeek, startMinute")
+    fun slots(): Flow<List<TimetableSlot>>
+
+    @Upsert
+    suspend fun upsertSlot(slot: TimetableSlot): Long
+
+    @Query("DELETE FROM timetable_slots WHERE id = :id")
+    suspend fun deleteSlot(id: Long)
+
+    @Query("SELECT * FROM terms ORDER BY startDay")
+    fun terms(): Flow<List<Term>>
+
+    @Upsert
+    suspend fun upsertTerm(term: Term): Long
+
+    @Query("DELETE FROM terms WHERE id = :id")
+    suspend fun deleteTerm(id: Long)
+
+    @Query("SELECT * FROM subjects")
+    suspend fun allSubjects(): List<Subject>
+
+    @Query("SELECT * FROM timetable_slots")
+    suspend fun allSlots(): List<TimetableSlot>
+
+    @Query("SELECT * FROM terms")
+    suspend fun allTerms(): List<Term>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSubjects(subjects: List<Subject>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSlots(slots: List<TimetableSlot>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTerms(terms: List<Term>)
+
+    @Query("DELETE FROM subjects")
+    suspend fun clearSubjects()
+
+    @Query("DELETE FROM terms")
+    suspend fun clearTerms()
 }

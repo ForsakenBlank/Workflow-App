@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 class Converters {
@@ -20,11 +21,26 @@ class Converters {
 
     @TypeConverter
     fun stringToTrackerKind(value: String): TrackerKind = TrackerKind.valueOf(value)
+
+    @TypeConverter
+    fun aggregateToString(aggregate: Aggregate?): String? = aggregate?.name
+
+    @TypeConverter
+    fun stringToAggregate(value: String?): Aggregate? = value?.let { runCatching { Aggregate.valueOf(it) }.getOrNull() }
+
+    @TypeConverter
+    fun repeatToString(repeat: Repeat): String = repeat.name
+
+    @TypeConverter
+    fun stringToRepeat(value: String): Repeat = runCatching { Repeat.valueOf(value) }.getOrDefault(Repeat.NONE)
 }
 
 @Database(
-    entities = [Item::class, NoteBody::class, Tracker::class, LogEntry::class, Tag::class, ItemTag::class],
-    version = 1,
+    entities = [
+        Item::class, NoteBody::class, Tracker::class, LogEntry::class, Tag::class, ItemTag::class,
+        Event::class, Task::class, Subject::class, TimetableSlot::class, Term::class,
+    ],
+    version = 2,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -33,45 +49,66 @@ abstract class AtlasDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun trackers(): TrackerDao
     abstract fun tags(): TagDao
+    abstract fun events(): EventDao
+    abstract fun tasks(): TaskDao
+    abstract fun timetable(): TimetableDao
 
     companion object {
         fun build(context: Context): AtlasDatabase =
             Room.databaseBuilder(context, AtlasDatabase::class.java, "atlas.db")
+                .addMigrations(*MIGRATIONS)
                 .addCallback(StarterContent)
                 .build()
+
+        // version 2 adds the calendar, tasks, timetable and number tracker settings
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `trackers` ADD COLUMN `aggregate` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`title` TEXT NOT NULL, `startsAt` INTEGER NOT NULL, `endsAt` INTEGER NOT NULL, " +
+                        "`allDay` INTEGER NOT NULL, `color` INTEGER, `location` TEXT, `notes` TEXT, " +
+                        "`repeatRule` TEXT NOT NULL, `repeatUntil` INTEGER, `created` INTEGER NOT NULL)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_events_startsAt` ON `events` (`startsAt`)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `tasks` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`title` TEXT NOT NULL, `notes` TEXT, `due` INTEGER, `priority` INTEGER NOT NULL, " +
+                        "`done` INTEGER NOT NULL, `doneAt` INTEGER, `repeatRule` TEXT NOT NULL, " +
+                        "`subjectId` INTEGER, `created` INTEGER NOT NULL)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_tasks_due` ON `tasks` (`due`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_tasks_subjectId` ON `tasks` (`subjectId`)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `subjects` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `color` INTEGER, `teacher` TEXT, `room` TEXT, `notes` TEXT, `folderId` INTEGER)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `timetable_slots` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`subjectId` INTEGER NOT NULL, `dayOfWeek` INTEGER NOT NULL, `startMinute` INTEGER NOT NULL, " +
+                        "`endMinute` INTEGER NOT NULL, `week` INTEGER NOT NULL, `kind` TEXT, `room` TEXT, " +
+                        "FOREIGN KEY(`subjectId`) REFERENCES `subjects`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_timetable_slots_subjectId` ON `timetable_slots` (`subjectId`)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `terms` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `startDay` INTEGER NOT NULL, `endDay` INTEGER NOT NULL)"
+                )
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
     }
 }
 
-// first launch gets the three starter trackers from the plan and a welcome note
+// a fresh install only gets an inbox, the starter pack picker adds everything else
 private object StarterContent : RoomDatabase.Callback() {
     override fun onCreate(db: SupportSQLiteDatabase) {
         val now = System.currentTimeMillis()
-        val item = "INSERT INTO items (id, type, parentId, name, color, sortOrder, pinned, created, updated, archived) " +
-            "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 0)"
-        db.execSQL(item, arrayOf(1, "FOLDER", null, "Inbox", null, 0, now, now))
-        db.execSQL(item, arrayOf(2, "FOLDER", null, "Habits", 0xFF4DB6AC.toInt(), 1, now, now))
-        db.execSQL(item, arrayOf(3, "NOTE", 1, "Welcome to Atlas", null, 0, now, now))
-        db.execSQL(item, arrayOf(4, "TRACKER", 2, "Cold shower", 0xFF64B5F6.toInt(), 0, now, now))
-        db.execSQL(item, arrayOf(5, "TRACKER", 2, "Gym", 0xFFE57373.toInt(), 1, now, now))
-        db.execSQL(item, arrayOf(6, "TRACKER", 2, "Study", 0xFFBA68C8.toInt(), 2, now, now))
-
-        val tracker = "INSERT INTO trackers (itemId, kind, unit, dailyGoal, showOnHome) VALUES (?, ?, ?, ?, 1)"
-        db.execSQL(tracker, arrayOf(4, "COUNTER", null, 1))
-        db.execSQL(tracker, arrayOf(5, "YES_NO", null, null))
-        db.execSQL(tracker, arrayOf(6, "TIMER", null, 60))
-
-        db.execSQL("INSERT INTO note_bodies (itemId, text) VALUES (?, ?)", arrayOf(3, welcomeText))
-        db.execSQL("INSERT INTO tags (id, name) VALUES (1, 'atlas')")
-        db.execSQL("INSERT INTO item_tags (itemId, tagId) VALUES (3, 1)")
+        db.execSQL(
+            "INSERT INTO items (id, type, parentId, name, sortOrder, pinned, created, updated, archived) " +
+                "VALUES (1, 'FOLDER', NULL, 'Inbox', 0, 0, ?, ?, 0)",
+            arrayOf(now, now),
+        )
     }
-
-    private val welcomeText = """
-        Everything you make in Atlas lives in the Explorer, so notes, folders and trackers can sit side by side.
-
-        Home has one tap shortcuts for your trackers. Tap Cold shower to log one, tap Gym to mark today done, and tap Study to start a timer (tap again to stop and save it). Hold any shortcut to see its streaks, chart and history.
-
-        Add #tags anywhere in a note to group it, like this one is tagged #atlas.
-
-        Settings (the gear at the top) has the theme and backups.
-    """.trimIndent()
 }

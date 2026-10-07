@@ -1,8 +1,12 @@
 package com.forsakenblank.atlas.data
 
 import androidx.room.withTransaction
+import com.forsakenblank.atlas.util.next
+import com.forsakenblank.atlas.util.startMillis
 import com.forsakenblank.atlas.util.startOfDay
+import com.forsakenblank.atlas.util.toLocalDate
 import kotlinx.coroutines.flow.Flow
+import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 class AtlasRepository(private val db: AtlasDatabase) {
@@ -11,6 +15,9 @@ class AtlasRepository(private val db: AtlasDatabase) {
     private val notes = db.notes()
     private val trackers = db.trackers()
     private val tags = db.tags()
+    private val events = db.events()
+    private val tasks = db.tasks()
+    private val timetable = db.timetable()
 
     // explorer
 
@@ -92,7 +99,15 @@ class AtlasRepository(private val db: AtlasDatabase) {
         tags.dropUnused()
     }
 
+    suspend fun itemCount(): Int = items.count()
+
+    suspend fun emptyTrash() {
+        items.emptyTrash()
+        tags.dropUnused()
+    }
+
     suspend fun purgeOldTrash(days: Int = 30) {
+        if (days <= 0) return // 0 means keep forever
         items.purgeTrash(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(days.toLong()))
         tags.dropUnused()
     }
@@ -150,9 +165,10 @@ class AtlasRepository(private val db: AtlasDatabase) {
         dailyGoal: Int?,
         unit: String?,
         showOnHome: Boolean,
+        aggregate: Aggregate? = null,
     ): Long = db.withTransaction {
         val id = items.insert(Item(type = ItemType.TRACKER, parentId = parentId, name = name, color = color))
-        trackers.insert(Tracker(id, kind, unit, dailyGoal, showOnHome))
+        trackers.insert(Tracker(id, kind, unit, dailyGoal, showOnHome, aggregate = aggregate))
         id
     }
 
@@ -173,6 +189,8 @@ class AtlasRepository(private val db: AtlasDatabase) {
                     null
                 }
             }
+            // these need a value first, the ui asks for it and calls logValue
+            TrackerKind.NUMBER, TrackerKind.RATING -> null
             TrackerKind.TIMER -> {
                 val since = tracker.runningSince
                 if (since == null) {
@@ -188,11 +206,156 @@ class AtlasRepository(private val db: AtlasDatabase) {
         }
     }
 
+    suspend fun logValue(trackerId: Long, value: Double, note: String? = null, at: Long = System.currentTimeMillis()): Long =
+        trackers.insertLog(LogEntry(trackerId = trackerId, timestamp = at, value = value, note = note?.takeIf { it.isNotBlank() }))
+
+    // used by the focus timer to save a finished session onto a timer tracker
+    suspend fun logDuration(trackerId: Long, startedAt: Long, seconds: Long): Long =
+        trackers.insertLog(LogEntry(trackerId = trackerId, timestamp = startedAt, value = seconds.toDouble(), durationSeconds = seconds))
+
+    fun logsBetween(from: Long, to: Long): Flow<List<LogEntry>> = trackers.logsBetween(from, to)
+
+    fun loggedDays(from: Long): Flow<List<TrackerDay>> = trackers.loggedDays(from)
+
     suspend fun cancelTimer(trackerId: Long) {
         trackers.get(trackerId)?.let { trackers.update(it.copy(runningSince = null)) }
     }
 
     suspend fun deleteLog(id: Long) = trackers.deleteLog(id)
+
+    // calendar
+
+    fun eventsBetween(from: Long, to: Long): Flow<List<Event>> = events.eventsBetween(from, to)
+
+    suspend fun event(id: Long): Event? = events.get(id)
+
+    suspend fun saveEvent(event: Event) {
+        events.upsert(event)
+    }
+
+    suspend fun deleteEvent(id: Long) = events.delete(id)
+
+    // tasks
+
+    fun tasks(): Flow<List<Task>> = tasks.all()
+
+    fun tasksDueBetween(from: Long, to: Long): Flow<List<Task>> = tasks.dueBetween(from, to)
+
+    fun overdueTasks(before: Long): Flow<List<Task>> = tasks.openDueBefore(before)
+
+    suspend fun saveTask(task: Task) {
+        tasks.upsert(task)
+    }
+
+    suspend fun quickAddTask(title: String, due: Long? = null, subjectId: Long? = null) {
+        tasks.upsert(Task(title = title, due = due, subjectId = subjectId))
+    }
+
+    // ticking a repeating task rolls a fresh copy forward to the next due date
+    suspend fun setTaskDone(task: Task, done: Boolean) {
+        db.withTransaction {
+            val repeating = done && task.repeatRule != Repeat.NONE
+            // the finished copy stops repeating so unticking it later does not spawn another
+            tasks.upsert(
+                task.copy(
+                    done = done,
+                    doneAt = if (done) System.currentTimeMillis() else null,
+                    repeatRule = if (repeating) Repeat.NONE else task.repeatRule,
+                )
+            )
+            if (repeating) {
+                val from = task.due?.toLocalDate() ?: LocalDate.now()
+                tasks.upsert(
+                    task.copy(
+                        id = 0,
+                        done = false,
+                        doneAt = null,
+                        due = task.repeatRule.next(from).startMillis(),
+                        created = System.currentTimeMillis(),
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun deleteTask(id: Long) = tasks.delete(id)
+
+    suspend fun clearDoneTasks() = tasks.clearDone()
+
+    // timetable
+
+    fun subjects(): Flow<List<Subject>> = timetable.subjects()
+
+    fun slots(): Flow<List<TimetableSlot>> = timetable.slots()
+
+    fun terms(): Flow<List<Term>> = timetable.terms()
+
+    suspend fun saveSubject(subject: Subject, makeFolder: Boolean) {
+        db.withTransaction {
+            var toSave = subject
+            if (makeFolder && subject.folderId == null) {
+                val parent = subjectsFolder()
+                toSave = subject.copy(folderId = items.insert(Item(type = ItemType.FOLDER, parentId = parent, name = subject.name, color = subject.color)))
+            }
+            timetable.upsertSubject(toSave)
+        }
+    }
+
+    // every subject folder lives inside one "Subjects" folder at the root
+    private suspend fun subjectsFolder(): Long {
+        val existing = items.all().firstOrNull { it.type == ItemType.FOLDER && it.parentId == null && it.name == "Subjects" && it.deletedAt == null }
+        return existing?.id ?: items.insert(Item(type = ItemType.FOLDER, name = "Subjects"))
+    }
+
+    suspend fun deleteSubject(id: Long) = timetable.deleteSubject(id)
+
+    suspend fun saveSlot(slot: TimetableSlot) {
+        timetable.upsertSlot(slot)
+    }
+
+    suspend fun deleteSlot(id: Long) = timetable.deleteSlot(id)
+
+    suspend fun saveTerm(term: Term) {
+        timetable.upsertTerm(term)
+    }
+
+    suspend fun deleteTerm(id: Long) = timetable.deleteTerm(id)
+
+    // starter packs
+
+    suspend fun addStarterPack(pack: StarterPack) {
+        db.withTransaction {
+            val folder = items.insert(Item(type = ItemType.FOLDER, name = pack.title, color = pack.color))
+            pack.trackers.forEachIndexed { index, t ->
+                val id = items.insert(Item(type = ItemType.TRACKER, parentId = folder, name = t.name, color = t.color, sortOrder = index))
+                trackers.insert(Tracker(id, t.kind, t.unit, t.goal, showOnHome = true, aggregate = t.aggregate))
+            }
+            pack.notes.forEach { (title, text) ->
+                val id = items.insert(Item(type = ItemType.NOTE, parentId = folder, name = title))
+                notes.upsert(NoteBody(id, text))
+                setTags(id, findTags(text))
+            }
+            pack.tasks.forEach { tasks.upsert(Task(title = it)) }
+        }
+    }
+
+    // the first version put three example trackers on every new install, these find them if they were never used
+    suspend fun unusedOldExamples(): List<Item> {
+        val names = mapOf(4L to "Cold shower", 5L to "Gym", 6L to "Study")
+        return names.mapNotNull { (id, name) ->
+            items.get(id)?.takeIf { it.type == ItemType.TRACKER && it.name == name && it.deletedAt == null && trackers.logsSinceOnce(id, 0).isEmpty() }
+        }
+    }
+
+    suspend fun removeOldExamples() {
+        unusedOldExamples().forEach { moveToTrash(it) }
+        // the "Habits" folder they came in goes too when it is left empty
+        items.get(2)?.let { folder ->
+            if (folder.type == ItemType.FOLDER && folder.name == "Habits" && folder.deletedAt == null && items.childrenOnce(folder.id).none { it.deletedAt == null }) {
+                moveToTrash(folder)
+            }
+        }
+    }
 
     // backup
 
@@ -205,6 +368,11 @@ class AtlasRepository(private val db: AtlasDatabase) {
         logs = trackers.allLogs(),
         tags = tags.all(),
         itemTags = tags.allLinks(),
+        events = events.all(),
+        tasks = tasks.allOnce(),
+        subjects = timetable.allSubjects(),
+        slots = timetable.allSlots(),
+        terms = timetable.allTerms(),
     )
 
     suspend fun restoreSnapshot(backup: Backup) {
@@ -218,6 +386,15 @@ class AtlasRepository(private val db: AtlasDatabase) {
             trackers.insertAllLogs(backup.logs)
             tags.insertAll(backup.tags)
             tags.link(backup.itemTags)
+            events.clear()
+            events.insertAll(backup.events)
+            tasks.clear()
+            tasks.insertAll(backup.tasks)
+            timetable.clearSubjects() // slots go with their subjects
+            timetable.insertSubjects(backup.subjects)
+            timetable.insertSlots(backup.slots)
+            timetable.clearTerms()
+            timetable.insertTerms(backup.terms)
         }
     }
 

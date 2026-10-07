@@ -16,17 +16,18 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -35,10 +36,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,11 +48,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.forsakenblank.atlas.data.AtlasRepository
+import com.forsakenblank.atlas.data.NoteLayout
 import com.forsakenblank.atlas.data.NoteRow
+import com.forsakenblank.atlas.data.NoteSort
 import com.forsakenblank.atlas.data.Tag
 import com.forsakenblank.atlas.ui.AtlasNavigator
+import com.forsakenblank.atlas.ui.common.AtlasCard
 import com.forsakenblank.atlas.ui.common.EmptyState
 import com.forsakenblank.atlas.ui.common.atlasViewModel
+import com.forsakenblank.atlas.ui.theme.LocalSettings
 import com.forsakenblank.atlas.util.formatDay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -84,6 +89,17 @@ class NotesViewModel(private val repo: AtlasRepository) : ViewModel() {
     suspend fun newNote(): Long = repo.createNote(parentId = null)
 }
 
+private fun sortNotes(notes: List<NoteRow>, sort: NoteSort, pinnedFirst: Boolean): List<NoteRow> {
+    val byChoice: Comparator<NoteRow> = when (sort) {
+        NoteSort.EDITED -> compareByDescending { it.item.updated }
+        NoteSort.CREATED -> compareByDescending { it.item.created }
+        NoteSort.TITLE -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.item.name.ifBlank { "untitled" } }
+        NoteSort.COLOUR -> compareBy<NoteRow> { it.item.color == null }.thenBy { it.item.color ?: 0 }.thenByDescending { it.item.updated }
+    }
+    val order = if (pinnedFirst) compareByDescending<NoteRow> { it.item.pinned }.then(byChoice) else byChoice
+    return notes.sortedWith(order)
+}
+
 @Composable
 fun NotesScreen(navigator: AtlasNavigator) {
     val vm = atlasViewModel { NotesViewModel(it.repository) }
@@ -91,14 +107,19 @@ fun NotesScreen(navigator: AtlasNavigator) {
     val tags by vm.tags.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
     val selectedTag by vm.selectedTag.collectAsStateWithLifecycle()
+    val settings = LocalSettings.current
     val scope = rememberCoroutineScope()
+    val sorted = remember(notes, settings.noteSort, settings.pinnedFirst) { sortNotes(notes, settings.noteSort, settings.pinnedFirst) }
+    val grid = settings.noteLayout == NoteLayout.GRID
 
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
+        LazyVerticalGrid(
+            columns = if (grid) GridCells.Adaptive(160.dp) else GridCells.Fixed(1),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(if (settings.noteLayout == NoteLayout.COMPACT) 6.dp else 10.dp),
         ) {
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { vm.query.value = it },
@@ -110,7 +131,7 @@ fun NotesScreen(navigator: AtlasNavigator) {
                 )
             }
             if (tags.isNotEmpty()) {
-                item {
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(tags, key = { it.id }) { tag ->
                             FilterChip(
@@ -122,8 +143,8 @@ fun NotesScreen(navigator: AtlasNavigator) {
                     }
                 }
             }
-            if (notes.isEmpty()) {
-                item {
+            if (sorted.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     EmptyState(
                         icon = Icons.Outlined.Description,
                         title = if (query.isBlank() && selectedTag == null) "No notes yet" else "Nothing matches",
@@ -131,8 +152,13 @@ fun NotesScreen(navigator: AtlasNavigator) {
                     )
                 }
             }
-            items(notes, key = { it.item.id }) { note ->
-                NoteCard(note) { navigator.openNote(note.item.id) }
+            gridItems(sorted, key = { it.item.id }) { note ->
+                NoteCard(
+                    note = note,
+                    previewLines = if (settings.noteLayout == NoteLayout.COMPACT) 0 else settings.notePreviewLines,
+                    showDate = settings.showNoteDates,
+                    compact = settings.noteLayout == NoteLayout.COMPACT,
+                ) { navigator.openNote(note.item.id) }
             }
         }
 
@@ -146,11 +172,8 @@ fun NotesScreen(navigator: AtlasNavigator) {
 }
 
 @Composable
-fun NoteCard(note: NoteRow, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clip(CardDefaults.shape).clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-    ) {
+fun NoteCard(note: NoteRow, previewLines: Int = 2, showDate: Boolean = true, compact: Boolean = false, onClick: () -> Unit) {
+    AtlasCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Row(Modifier.height(IntrinsicSize.Min)) {
             // colour stripe down the side of the card
             note.item.color?.let { c ->
@@ -161,7 +184,10 @@ fun NoteCard(note: NoteRow, onClick: () -> Unit) {
                         .background(Color(c))
                 )
             }
-            Column(Modifier.padding(14.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(
+                Modifier.padding(horizontal = 14.dp, vertical = if (compact) 10.dp else 14.dp).weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         note.item.name.ifBlank { "Untitled" },
@@ -171,22 +197,32 @@ fun NoteCard(note: NoteRow, onClick: () -> Unit) {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    if (compact && showDate) {
+                        Text(formatDay(note.item.updated), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    }
                     if (note.item.pinned) {
-                        Icon(Icons.Filled.PushPin, contentDescription = "Pinned", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(
+                            Icons.Filled.PushPin,
+                            contentDescription = "Pinned",
+                            modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                     }
                 }
                 val preview = note.text.orEmpty().trim()
-                if (preview.isNotEmpty()) {
+                if (preview.isNotEmpty() && previewLines > 0) {
                     Text(
                         preview,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
+                        maxLines = previewLines,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Spacer(Modifier.height(2.dp))
-                Text(formatDay(note.item.updated), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                if (!compact && showDate) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(formatDay(note.item.updated), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                }
             }
         }
     }

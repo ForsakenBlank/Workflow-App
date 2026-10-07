@@ -2,16 +2,20 @@
 
 Home of **Atlas**, an all in one Android app for notes, tracking, planning and quality of life. The full plan lives in the "Atlas: Android App Plan" doc.
 
-## What works so far (phase 1)
+## What is in it (0.2.0)
 
-- **Home**: today card plus one tap tracker shortcuts, with an undo snackbar after each log
-- **Notes**: search, #tags, pinning, colours, autosave, word count
-- **Track**: counter, yes or no, and timer trackers with daily goals, streaks, a 14 day chart and full history
-- **Explorer**: one folder tree for notes, trackers and folders, with breadcrumbs, colours, move, rename and a 30 day trash
-- **Settings**: system, light or dark theme, wallpaper colours, pure black, and backup or restore to a JSON file
-- Calendar is a placeholder until phase 2
+- **Home**: greeting with your name, now and next (classes and events), today's agenda, quick links to every section, one tap tracker shortcuts with undo, pinned notes and a quick add button
+- **Notes**: search, #tags, pinning, colours, autosave, list, grid or compact layouts, sorting
+- **Calendar**: month, week and agenda views, events with colours, locations and repeats, plus tasks, classes and tracker logs on each day
+- **Timetable**: weekly grid, subjects with colours, teachers and rooms, week A and B, term dates, now and next
+- **Tasks**: quick add that understands "tomorrow", "friday" and "!!", due dates, priorities, repeats and subjects
+- **Track**: counter, yes or no, timer, number and rating trackers with goals, streaks, charts and history
+- **Focus**: pomodoro timer that can log finished sessions to a tracker
+- **Tools**: dice, coin, random numbers and picker, odds converter, streak odds, percentages, tip splitter, unit converter, date maths, tally counter and stopwatch
+- **Explorer**: one folder tree for notes, trackers and folders, with list or grid view and a trash
+- **Settings**: about 90 options across 15 categories with search, 17 built in themes, a theme creator with a full colour picker, page and tab transitions, five app icons, backups and starter packs
 
-First launch comes with the starter trackers from the plan (Cold shower, Gym, Study) and a welcome note.
+A fresh install starts empty and offers starter packs (study, fitness, wellbeing, habits, work, money) instead of built in shortcuts.
 
 ## Getting the APK
 
@@ -28,6 +32,7 @@ Needs JDK 17 and the Android SDK (Android Studio sets both up).
 
 ```
 ./gradlew assembleDebug
+./gradlew testDebugUnitTest
 ```
 
 The APK ends up in `app/build/outputs/apk/debug/app-debug.apk`.

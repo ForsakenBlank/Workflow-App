@@ -29,6 +29,7 @@ import com.forsakenblank.atlas.ui.AtlasNavigator
 import com.forsakenblank.atlas.ui.common.EmptyState
 import com.forsakenblank.atlas.ui.common.atlasViewModel
 import com.forsakenblank.atlas.ui.common.icon
+import com.forsakenblank.atlas.ui.theme.LocalSettings
 import com.forsakenblank.atlas.util.formatDay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -51,6 +52,7 @@ class TrashViewModel(private val repo: AtlasRepository) : ViewModel() {
 fun TrashScreen(navigator: AtlasNavigator) {
     val vm = atlasViewModel { TrashViewModel(it.repository) }
     val items by vm.items.collectAsStateWithLifecycle()
+    val days = LocalSettings.current.trashDays
 
     Scaffold(
         topBar = {
@@ -66,7 +68,13 @@ fun TrashScreen(navigator: AtlasNavigator) {
     ) { padding ->
         LazyColumn(Modifier.padding(padding)) {
             if (items.isEmpty()) {
-                item { EmptyState(Icons.Outlined.Delete, "Trash is empty", "Things you delete land here for 30 days.") }
+                item {
+                    EmptyState(
+                        Icons.Outlined.Delete,
+                        "Trash is empty",
+                        if (days <= 0) "Things you delete land here until you empty it." else "Things you delete land here for $days days.",
+                    )
+                }
             }
             items(items, key = { it.id }) { item ->
                 ListItem(

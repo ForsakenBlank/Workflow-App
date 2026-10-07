@@ -17,9 +17,15 @@ data class Backup(
     val logs: List<LogEntry>,
     val tags: List<Tag>,
     val itemTags: List<ItemTag>,
+    // added in version 2, older backups simply have none
+    val events: List<Event> = emptyList(),
+    val tasks: List<Task> = emptyList(),
+    val subjects: List<Subject> = emptyList(),
+    val slots: List<TimetableSlot> = emptyList(),
+    val terms: List<Term> = emptyList(),
 ) {
     companion object {
-        const val CURRENT_VERSION = 1
+        const val CURRENT_VERSION = 2
     }
 }
 

@@ -12,9 +12,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -32,13 +36,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.forsakenblank.atlas.data.TrackerKind
+import com.forsakenblank.atlas.ui.common.rememberHaptic
 import com.forsakenblank.atlas.ui.common.toItemColor
+import com.forsakenblank.atlas.ui.theme.LocalSettings
 import com.forsakenblank.atlas.util.formatDuration
 import kotlinx.coroutines.delay
 
@@ -50,7 +54,8 @@ fun TrackerButton(
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val haptics = LocalHapticFeedback.current
+    val buzz = rememberHaptic()
+    val showStreak = LocalSettings.current.showStreaksOnCards && summary.streak > 0
     val accent = summary.item.color.toItemColor(MaterialTheme.colorScheme.secondary)
     val container = if (summary.goalMet || summary.running) {
         accent.copy(alpha = 0.28f).compositeOver(MaterialTheme.colorScheme.surfaceContainerHigh)
@@ -61,7 +66,7 @@ fun TrackerButton(
     Card(
         modifier = modifier.combinedClickable(
             onClick = {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                buzz()
                 onTap()
             },
             onLongClick = onLongPress,
@@ -80,6 +85,15 @@ fun TrackerButton(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (showStreak) {
+                    Icon(
+                        Icons.Outlined.LocalFireDepartment,
+                        contentDescription = "Streak",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text("${summary.streak}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+                }
             }
             if (summary.running) {
                 LiveTimer(since = summary.tracker.runningSince ?: 0L, color = accent)
@@ -124,4 +138,6 @@ fun kindIcon(summary: TrackerSummary) = when (summary.kind) {
     TrackerKind.COUNTER -> Icons.Outlined.AddCircleOutline
     TrackerKind.YES_NO -> if (summary.doneToday) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked
     TrackerKind.TIMER -> if (summary.running) Icons.Filled.Stop else Icons.Filled.PlayArrow
+    TrackerKind.NUMBER -> Icons.Outlined.Straighten
+    TrackerKind.RATING -> if (summary.doneToday) Icons.Filled.Star else Icons.Outlined.StarOutline
 }

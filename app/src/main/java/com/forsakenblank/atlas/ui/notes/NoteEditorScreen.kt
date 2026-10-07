@@ -47,6 +47,7 @@ import com.forsakenblank.atlas.data.AtlasRepository
 import com.forsakenblank.atlas.ui.AtlasNavigator
 import com.forsakenblank.atlas.ui.common.ColorPickerDialog
 import com.forsakenblank.atlas.ui.common.atlasViewModel
+import com.forsakenblank.atlas.ui.theme.LocalSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -142,6 +143,8 @@ class NoteEditorViewModel(
 @Composable
 fun NoteEditorScreen(id: Long, navigator: AtlasNavigator) {
     val vm = atlasViewModel { NoteEditorViewModel(id, it.repository, it.appScope) }
+    val settings = LocalSettings.current
+    val bodyStyle = MaterialTheme.typography.bodyLarge.let { it.copy(fontSize = it.fontSize * settings.editorTextSize.scale, lineHeight = it.lineHeight * settings.editorTextSize.scale) }
     val item by vm.item.collectAsStateWithLifecycle()
     var menuOpen by remember { mutableStateOf(false) }
     var pickingColor by remember { mutableStateOf(false) }
@@ -217,7 +220,7 @@ fun NoteEditorScreen(id: Long, navigator: AtlasNavigator) {
                     value = vm.text,
                     onValueChange = vm::onTextChange,
                     placeholder = { Text("Start writing. Use #tags to group notes.") },
-                    textStyle = MaterialTheme.typography.bodyLarge,
+                    textStyle = bodyStyle,
                     colors = fieldColors,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.fillMaxWidth(),
@@ -230,12 +233,14 @@ fun NoteEditorScreen(id: Long, navigator: AtlasNavigator) {
                         tags.forEach { tag -> AssistChip(onClick = {}, label = { Text("#$tag") }) }
                     }
                 }
-                Text(
-                    "$words words, ${vm.text.length} characters",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.padding(16.dp),
-                )
+                if (settings.showWordCount) {
+                    Text(
+                        "$words words, ${vm.text.length} characters",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
             }
         }
     }

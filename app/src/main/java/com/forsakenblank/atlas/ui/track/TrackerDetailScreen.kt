@@ -3,6 +3,8 @@ package com.forsakenblank.atlas.ui.track
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,7 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Close
@@ -24,6 +28,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.forsakenblank.atlas.data.Aggregate
 import com.forsakenblank.atlas.data.AtlasRepository
 import com.forsakenblank.atlas.data.LogEntry
 import com.forsakenblank.atlas.data.TrackerKind
@@ -61,6 +67,8 @@ import com.forsakenblank.atlas.ui.AtlasNavigator
 import com.forsakenblank.atlas.ui.common.ColorRow
 import com.forsakenblank.atlas.ui.common.atlasViewModel
 import com.forsakenblank.atlas.ui.common.toItemColor
+import com.forsakenblank.atlas.ui.settings.ConfirmDialog
+import com.forsakenblank.atlas.ui.theme.LocalSettings
 import com.forsakenblank.atlas.util.formatDay
 import com.forsakenblank.atlas.util.formatDuration
 import com.forsakenblank.atlas.util.formatTime
@@ -70,6 +78,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 class TrackerDetailViewModel(private val id: Long, private val repo: AtlasRepository) : ViewModel() {
 
@@ -84,12 +93,20 @@ class TrackerDetailViewModel(private val id: Long, private val repo: AtlasReposi
         viewModelScope.launch { repo.cancelTimer(id) }
     }
 
-    fun save(name: String, color: Int?, goal: Int?, showOnHome: Boolean) {
+    fun save(name: String, color: Int?, goal: Int?, showOnHome: Boolean, unit: String?, aggregate: Aggregate?) {
         val current = tracker.value ?: return
         viewModelScope.launch {
             repo.rename(current.item.copy(color = color), name)
-            repo.updateTracker(current.tracker.copy(dailyGoal = goal, showOnHome = showOnHome))
+            repo.updateTracker(current.tracker.copy(dailyGoal = goal, showOnHome = showOnHome, unit = unit, aggregate = aggregate))
         }
+    }
+
+    fun logValue(value: Double, note: String?) {
+        viewModelScope.launch { repo.logValue(id, value, note) }
+    }
+
+    fun tap() {
+        viewModelScope.launch { repo.tap(id) }
     }
 
     fun moveToTrash(done: () -> Unit) {
@@ -101,11 +118,6 @@ class TrackerDetailViewModel(private val id: Long, private val repo: AtlasReposi
     }
 }
 
-// one number per day for the chart, counts for counters and minutes for timers
-private fun dailyValue(kind: TrackerKind, logs: List<LogEntry>): Float = when (kind) {
-    TrackerKind.TIMER -> logs.sumOf { it.durationSeconds ?: 0L } / 60f
-    else -> logs.size.toFloat()
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -113,8 +125,11 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
     val vm = atlasViewModel { TrackerDetailViewModel(id, it.repository) }
     val tracker by vm.tracker.collectAsStateWithLifecycle()
     val logs by vm.logs.collectAsStateWithLifecycle()
+    val settings = LocalSettings.current
     var menuOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
+    var logging by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf<LogEntry?>(null) }
 
     Scaffold(
         topBar = {
@@ -154,10 +169,36 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
         val byDay = remember(logs) { logs.groupBy { it.timestamp.toLocalDate() } }
         val streak = remember(byDay) { streaks(byDay.keys) }
         val today = LocalDate.now()
-        val last14 = (13 downTo 0).map { today.minusDays(it.toLong()) }
-        val values = last14.map { dailyValue(t.tracker.kind, byDay[it].orEmpty()) }
-        val weekTotal = values.takeLast(7).sum()
-        val unitLabel = if (t.tracker.kind == TrackerKind.TIMER) "min" else t.tracker.unit.orEmpty()
+        val kind = t.tracker.kind
+        val chartDays = settings.chartDays.coerceIn(7, 90)
+        val shownDays = (chartDays - 1 downTo 0).map { today.minusDays(it.toLong()) }
+        val dayValues = shownDays.map { dayValue(t.tracker, byDay[it].orEmpty()) }
+        val values = dayValues.map { (it ?: 0.0).toFloat() }
+        val unitLabel = if (kind == TrackerKind.TIMER) "min" else t.tracker.unit.orEmpty()
+        // totals make sense for counts and sums, averages for ratings and things like weight
+        val averages = kind == TrackerKind.RATING || (kind == TrackerKind.NUMBER && t.tracker.aggregate != null && t.tracker.aggregate != Aggregate.SUM)
+        val lastWeek = dayValues.takeLast(7).filterNotNull()
+        val weekLabel = if (averages) "7 day average" else "Last 7 days"
+        val weekValue = when {
+            averages && lastWeek.isEmpty() -> "None"
+            averages -> "${formatNumber(lastWeek.average())} $unitLabel".trim()
+            else -> "${formatNumber(lastWeek.sum())} $unitLabel".trim()
+        }
+        val allTime = when (kind) {
+            TrackerKind.TIMER -> formatDuration(logs.sumOf { it.durationSeconds ?: 0L })
+            TrackerKind.NUMBER, TrackerKind.RATING -> {
+                val all = byDay.values.mapNotNull { dayValue(t.tracker, it) }
+                if (all.isEmpty()) "None" else if (averages) formatNumber(all.average()) else formatNumber(all.sum())
+            }
+            else -> "${logs.size}"
+        }
+        val todaySummary = TrackerSummary(
+            item = t.item,
+            tracker = t.tracker,
+            todayCount = byDay[today].orEmpty().size,
+            todaySeconds = byDay[today].orEmpty().sumOf { it.durationSeconds ?: 0L },
+            todayValue = dayValue(t.tracker, byDay[today].orEmpty()).takeIf { byDay[today].orEmpty().isNotEmpty() },
+        )
 
         LazyColumn(
             modifier = Modifier.padding(padding),
@@ -173,6 +214,17 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
                 }
             }
             item {
+                when (kind) {
+                    TrackerKind.NUMBER, TrackerKind.RATING -> Button(onClick = { logging = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (kind == TrackerKind.RATING) "Rate today" else "Log an amount")
+                    }
+                    TrackerKind.COUNTER -> Button(onClick = vm::tap, modifier = Modifier.fillMaxWidth()) {
+                        Text("Log one now (${todaySummary.todayLabel()})")
+                    }
+                    else -> Text(todaySummary.todayLabel(), style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatCard("Current streak", "${streak.current} d", Modifier.weight(1f))
                     StatCard("Best streak", "${streak.best} d", Modifier.weight(1f))
@@ -180,17 +232,17 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
             }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatCard("Last 7 days", "${weekTotal.toInt()} $unitLabel".trim(), Modifier.weight(1f))
-                    StatCard("All time", if (t.tracker.kind == TrackerKind.TIMER) formatDuration(logs.sumOf { it.durationSeconds ?: 0L }) else "${logs.size}", Modifier.weight(1f))
+                    StatCard(weekLabel, weekValue, Modifier.weight(1f))
+                    StatCard(if (averages) "All time average" else "All time", allTime, Modifier.weight(1f))
                 }
             }
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Last 14 days", style = MaterialTheme.typography.titleSmall)
-                        BarChart(values, accent, goal = t.tracker.dailyGoal?.toFloat())
+                        Text("Last $chartDays days", style = MaterialTheme.typography.titleSmall)
+                        BarChart(values, accent, goal = if (kind == TrackerKind.RATING) 5f else t.tracker.dailyGoal?.toFloat())
                         Row {
-                            Text(last14.first().dayOfMonth.toString(), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                            Text(shownDays.first().format(DateTimeFormatter.ofPattern("d MMM")), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
                             Text("Today", style = MaterialTheme.typography.labelSmall)
                         }
                     }
@@ -207,16 +259,24 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
                 }
             }
             items(logs.take(200), key = { it.id }) { entry ->
-                val seconds = entry.durationSeconds
+                val detail = listOfNotNull(
+                    entry.durationSeconds?.let { formatDuration(it) },
+                    when (kind) {
+                        TrackerKind.NUMBER -> "${formatNumber(entry.value)} ${t.tracker.unit.orEmpty()}".trim()
+                        TrackerKind.RATING -> "${entry.value.toInt()} of 5 stars"
+                        else -> null
+                    },
+                    entry.note,
+                ).joinToString(", ")
                 ListItem(
-                    headlineContent = { Text("${formatDay(entry.timestamp)}, ${formatTime(entry.timestamp)}") },
-                    supportingContent = if (seconds != null) {
-                        { Text(formatDuration(seconds)) }
+                    headlineContent = { Text("${formatDay(entry.timestamp)}, ${formatTime(entry.timestamp, settings.use24Hour)}") },
+                    supportingContent = if (detail.isNotEmpty()) {
+                        { Text(detail) }
                     } else {
                         null
                     },
                     trailingContent = {
-                        IconButton(onClick = { vm.deleteLog(entry) }) {
+                        IconButton(onClick = { if (settings.confirmLogDelete) confirmDelete = entry else vm.deleteLog(entry) }) {
                             Icon(Icons.Outlined.Delete, contentDescription = "Delete entry")
                         }
                     },
@@ -231,11 +291,30 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
         EditTrackerDialog(
             tracker = t,
             onDismiss = { editing = false },
-            onSave = { name, color, goal, home ->
-                vm.save(name, color, goal, home)
+            onSave = { name, color, goal, home, unit, aggregate ->
+                vm.save(name, color, goal, home, unit, aggregate)
                 editing = false
             },
         )
+    }
+    if (logging && t != null) {
+        val todayLogs = logs.filter { it.timestamp.toLocalDate() == LocalDate.now() }
+        LogValueDialog(
+            summary = TrackerSummary(t.item, t.tracker, todayLogs.size, 0L, dayValue(t.tracker, todayLogs).takeIf { todayLogs.isNotEmpty() }),
+            onDismiss = { logging = false },
+            onLog = { value, note ->
+                vm.logValue(value, note)
+                logging = false
+            },
+        )
+    }
+    confirmDelete?.let { entry ->
+        ConfirmDialog(
+            title = "Delete this entry?",
+            body = "${formatDay(entry.timestamp)}, ${formatTime(entry.timestamp, settings.use24Hour)}",
+            button = "Delete",
+            onDismiss = { confirmDelete = null },
+        ) { vm.deleteLog(entry) }
     }
 }
 
@@ -272,32 +351,47 @@ private fun BarChart(values: List<Float>, color: Color, goal: Float?) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EditTrackerDialog(
     tracker: TrackerWithItem,
     onDismiss: () -> Unit,
-    onSave: (String, Int?, Int?, Boolean) -> Unit,
+    onSave: (String, Int?, Int?, Boolean, String?, Aggregate?) -> Unit,
 ) {
+    val kind = tracker.tracker.kind
     var name by remember { mutableStateOf(tracker.item.name) }
     var color by remember { mutableStateOf(tracker.item.color) }
     var goal by remember { mutableStateOf(tracker.tracker.dailyGoal?.toString().orEmpty()) }
+    var unit by remember { mutableStateOf(tracker.tracker.unit.orEmpty()) }
+    var aggregate by remember { mutableStateOf(tracker.tracker.aggregate ?: Aggregate.SUM) }
     var showOnHome by remember { mutableStateOf(tracker.tracker.showOnHome) }
-    val hasGoal = tracker.tracker.kind != TrackerKind.YES_NO
+    val hasGoal = kind == TrackerKind.COUNTER || kind == TrackerKind.TIMER || kind == TrackerKind.NUMBER
+    val hasUnit = kind == TrackerKind.COUNTER || kind == TrackerKind.NUMBER
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit tracker") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true)
                 if (hasGoal) {
                     OutlinedTextField(
                         value = goal,
-                        onValueChange = { v -> goal = v.filter(Char::isDigit).take(4) },
-                        label = { Text(if (tracker.tracker.kind == TrackerKind.TIMER) "Daily goal in minutes" else "Daily goal") },
+                        onValueChange = { v -> goal = v.filter(Char::isDigit).take(6) },
+                        label = { Text(if (kind == TrackerKind.TIMER) "Daily goal in minutes" else "Daily goal") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     )
+                }
+                if (hasUnit) {
+                    OutlinedTextField(value = unit, onValueChange = { unit = it.take(16) }, label = { Text("Unit") }, singleLine = true)
+                }
+                if (kind == TrackerKind.NUMBER) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Aggregate.entries.forEach { a ->
+                            FilterChip(selected = aggregate == a, onClick = { aggregate = a }, label = { Text(a.label) })
+                        }
+                    }
                 }
                 ColorRow(selected = color, onSelect = { color = it })
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -309,7 +403,16 @@ private fun EditTrackerDialog(
         confirmButton = {
             Button(
                 enabled = name.isNotBlank(),
-                onClick = { onSave(name.trim(), color, goal.toIntOrNull()?.takeIf { it > 0 && hasGoal }, showOnHome) },
+                onClick = {
+                    onSave(
+                        name.trim(),
+                        color,
+                        goal.toIntOrNull()?.takeIf { it > 0 && hasGoal },
+                        showOnHome,
+                        unit.trim().takeIf { it.isNotEmpty() && hasUnit },
+                        if (kind == TrackerKind.NUMBER) aggregate else null,
+                    )
+                },
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

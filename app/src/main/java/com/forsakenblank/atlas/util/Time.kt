@@ -2,6 +2,7 @@ package com.forsakenblank.atlas.util
 
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -25,9 +26,23 @@ fun formatDuration(seconds: Long): String {
 }
 
 private val timeFormat = DateTimeFormatter.ofPattern("HH:mm")
+private val twelveHourFormat = DateTimeFormatter.ofPattern("h:mm a")
 private val dayFormat = DateTimeFormatter.ofPattern("EEE d MMM")
 
-fun formatTime(millis: Long): String = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).format(timeFormat)
+fun formatTime(millis: Long, use24: Boolean = true): String =
+    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).format(if (use24) timeFormat else twelveHourFormat)
+
+// minutes after midnight, as used by timetable slots
+fun formatMinuteOfDay(minute: Int, use24: Boolean = true): String =
+    LocalTime.of((minute / 60).coerceIn(0, 23), minute % 60).format(if (use24) timeFormat else twelveHourFormat)
+
+fun LocalDate.atMinute(minute: Int): Long =
+    atTime(LocalTime.of((minute / 60).coerceIn(0, 23), minute % 60)).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+fun Long.minuteOfDay(): Int {
+    val time = Instant.ofEpochMilli(this).atZone(ZoneId.systemDefault()).toLocalTime()
+    return time.hour * 60 + time.minute
+}
 
 fun formatDay(millis: Long): String {
     val date = millis.toLocalDate()

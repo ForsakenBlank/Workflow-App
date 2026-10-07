@@ -2,85 +2,110 @@ package com.forsakenblank.atlas.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import com.forsakenblank.atlas.data.AppSettings
+import com.forsakenblank.atlas.data.FontChoice
 import com.forsakenblank.atlas.data.ThemeMode
 
-private val Navy = Color(0xFF1F3A5F)
-private val Teal = Color(0xFF2E8B80)
-private val Mint = Color(0xFF7FD1C7)
-private val Sand = Color(0xFFE9C46A)
+val LocalSettings = compositionLocalOf { AppSettings() }
 
-private val LightColors = lightColorScheme(
-    primary = Navy,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD5E3F7),
-    onPrimaryContainer = Color(0xFF0B1D33),
-    secondary = Teal,
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFCDEDE8),
-    onSecondaryContainer = Color(0xFF00201C),
-    tertiary = Color(0xFF8A6A12),
-    tertiaryContainer = Color(0xFFFBE7B5),
-    background = Color(0xFFF7F9FC),
-    surface = Color(0xFFF7F9FC),
-    surfaceVariant = Color(0xFFE1E6EE),
-    surfaceContainer = Color(0xFFEDF1F6),
-    surfaceContainerHigh = Color(0xFFE6EBF1),
-)
+fun AppSettings.allThemes(): List<AtlasTheme> = BuiltInThemes.all + customThemes
 
-private val DarkColors = darkColorScheme(
-    primary = Color(0xFFA9C7EE),
-    onPrimary = Color(0xFF0B1D33),
-    primaryContainer = Color(0xFF2B4A72),
-    onPrimaryContainer = Color(0xFFD5E3F7),
-    secondary = Mint,
-    onSecondary = Color(0xFF00201C),
-    secondaryContainer = Color(0xFF1E4E48),
-    onSecondaryContainer = Color(0xFFCDEDE8),
-    tertiary = Sand,
-    tertiaryContainer = Color(0xFF5C4708),
-    background = Color(0xFF101418),
-    surface = Color(0xFF101418),
-    surfaceVariant = Color(0xFF2C333B),
-    surfaceContainer = Color(0xFF1A2027),
-    surfaceContainerHigh = Color(0xFF232A32),
-)
+fun AppSettings.themeFor(dark: Boolean): AtlasTheme {
+    val id = if (dark) darkThemeId else lightThemeId
+    return allThemes().firstOrNull { it.id == id }
+        ?: BuiltInThemes.find(if (dark) BuiltInThemes.DEFAULT_DARK else BuiltInThemes.DEFAULT_LIGHT)!!
+}
+
+@Composable
+fun AppSettings.isDarkMode(): Boolean = when (themeMode) {
+    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    ThemeMode.LIGHT -> false
+    ThemeMode.DARK -> true
+}
 
 @Composable
 fun AtlasTheme(settings: AppSettings, content: @Composable () -> Unit) {
-    val dark = when (settings.themeMode) {
-        ThemeMode.SYSTEM -> isSystemInDarkTheme()
-        ThemeMode.LIGHT -> false
-        ThemeMode.DARK -> true
-    }
+    val dark = settings.isDarkMode()
+    val theme = settings.themeFor(dark)
     val context = LocalContext.current
-    var colors = when {
-        settings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        dark -> DarkColors
-        else -> LightColors
+    val colors = if (settings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val dynamic = if (theme.dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        if (theme.dark && settings.pureBlack) dynamic.copy(background = Color.Black, surface = Color.Black) else dynamic
+    } else {
+        remember(theme, settings.pureBlack) { theme.toColorScheme(settings.pureBlack) }
     }
-    if (dark && settings.pureBlack) {
-        colors = colors.copy(
-            background = Color.Black,
-            surface = Color.Black,
-            surfaceContainer = Color(0xFF0E0E0E),
-            surfaceContainerHigh = Color(0xFF161616),
-        )
+    val shapes = remember(settings.cornerRadius) { shapesFor(settings.cornerRadius) }
+    val typography = remember(settings.font, settings.boldHeadings) { typographyFor(settings.font, settings.boldHeadings) }
+    val base = LocalDensity.current
+    val density = Density(base.density * settings.uiScale, base.fontScale * settings.fontScale)
+
+    CompositionLocalProvider(LocalDensity provides density, LocalSettings provides settings) {
+        MaterialTheme(colorScheme = colors, shapes = shapes, typography = typography, content = content)
     }
-    MaterialTheme(colorScheme = colors, content = content)
 }
 
-// swatches offered when colouring folders, notes and trackers
+private fun shapesFor(radius: Int): Shapes {
+    val r = radius.coerceIn(0, 32)
+    return Shapes(
+        extraSmall = RoundedCornerShape((r / 4).dp),
+        small = RoundedCornerShape((r / 2).dp),
+        medium = RoundedCornerShape((r * 3 / 4).dp),
+        large = RoundedCornerShape(r.dp),
+        extraLarge = RoundedCornerShape((r * 3 / 2).dp),
+    )
+}
+
+private fun typographyFor(font: FontChoice, boldHeadings: Boolean): Typography {
+    val family = when (font) {
+        FontChoice.DEFAULT -> FontFamily.Default
+        FontChoice.SANS -> FontFamily.SansSerif
+        FontChoice.SERIF -> FontFamily.Serif
+        FontChoice.MONO -> FontFamily.Monospace
+        FontChoice.CURSIVE -> FontFamily.Cursive
+    }
+    val t = Typography()
+    fun body(style: TextStyle) = style.copy(fontFamily = family)
+    fun heading(style: TextStyle) = style.copy(fontFamily = family, fontWeight = if (boldHeadings) FontWeight.Bold else style.fontWeight)
+    return Typography(
+        displayLarge = heading(t.displayLarge),
+        displayMedium = heading(t.displayMedium),
+        displaySmall = heading(t.displaySmall),
+        headlineLarge = heading(t.headlineLarge),
+        headlineMedium = heading(t.headlineMedium),
+        headlineSmall = heading(t.headlineSmall),
+        titleLarge = heading(t.titleLarge),
+        titleMedium = heading(t.titleMedium),
+        titleSmall = heading(t.titleSmall),
+        bodyLarge = body(t.bodyLarge),
+        bodyMedium = body(t.bodyMedium),
+        bodySmall = body(t.bodySmall),
+        labelLarge = body(t.labelLarge),
+        labelMedium = body(t.labelMedium),
+        labelSmall = body(t.labelSmall),
+    )
+}
+
+// swatches offered when colouring folders, notes, events and trackers
 val ItemColors = listOf(
-    0xFFE57373, 0xFFFFB74D, 0xFFFFD54F, 0xFF81C784, 0xFF4DB6AC,
-    0xFF64B5F6, 0xFF7986CB, 0xFFBA68C8, 0xFFF06292, 0xFF90A4AE,
+    0xFFE57373, 0xFFF06292, 0xFFBA68C8, 0xFF9575CD, 0xFF7986CB, 0xFF64B5F6,
+    0xFF4FC3F7, 0xFF4DB6AC, 0xFF81C784, 0xFFAED581, 0xFFFFD54F, 0xFFFFB74D,
+    0xFFF4A259, 0xFFA1887F, 0xFF90A4AE, 0xFF616161,
 ).map { it.toInt() }

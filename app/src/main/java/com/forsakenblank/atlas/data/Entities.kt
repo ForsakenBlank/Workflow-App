@@ -8,7 +8,12 @@ import kotlinx.serialization.Serializable
 
 enum class ItemType { FOLDER, NOTE, TRACKER }
 
-enum class TrackerKind { COUNTER, YES_NO, TIMER }
+enum class TrackerKind { COUNTER, YES_NO, TIMER, NUMBER, RATING }
+
+// how a number tracker turns a day of logs into one value
+enum class Aggregate { SUM, AVERAGE, LAST }
+
+enum class Repeat { NONE, DAILY, WEEKDAYS, WEEKLY, FORTNIGHTLY, MONTHLY, YEARLY }
 
 // everything in the explorer is an item, the type decides which extra table holds its data
 @Serializable
@@ -50,6 +55,7 @@ data class Tracker(
     val dailyGoal: Int? = null, // taps for counters, minutes for timers
     val showOnHome: Boolean = true,
     val runningSince: Long? = null, // timer start, kept in the db so it survives the app closing
+    val aggregate: Aggregate? = null, // only used by number trackers, null means sum
 )
 
 @Serializable
@@ -88,4 +94,73 @@ data class Tag(
 data class ItemTag(
     val itemId: Long,
     val tagId: Long,
+)
+
+@Serializable
+@Entity(tableName = "events", indices = [Index("startsAt")])
+data class Event(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    val startsAt: Long,
+    val endsAt: Long,
+    val allDay: Boolean = false,
+    val color: Int? = null,
+    val location: String? = null,
+    val notes: String? = null,
+    val repeatRule: Repeat = Repeat.NONE,
+    val repeatUntil: Long? = null,
+    val created: Long = System.currentTimeMillis(),
+)
+
+@Serializable
+@Entity(tableName = "tasks", indices = [Index("due"), Index("subjectId")])
+data class Task(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    val notes: String? = null,
+    val due: Long? = null, // start of the due day
+    val priority: Int = 0, // 0 none, 1 low, 2 medium, 3 high
+    val done: Boolean = false,
+    val doneAt: Long? = null,
+    val repeatRule: Repeat = Repeat.NONE,
+    val subjectId: Long? = null, // homework belongs to a timetable subject
+    val created: Long = System.currentTimeMillis(),
+)
+
+@Serializable
+@Entity(tableName = "subjects")
+data class Subject(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val color: Int? = null,
+    val teacher: String? = null,
+    val room: String? = null,
+    val notes: String? = null,
+    val folderId: Long? = null, // explorer folder made for this subject
+)
+
+@Serializable
+@Entity(
+    tableName = "timetable_slots",
+    indices = [Index("subjectId")],
+    foreignKeys = [ForeignKey(entity = Subject::class, parentColumns = ["id"], childColumns = ["subjectId"], onDelete = ForeignKey.CASCADE)],
+)
+data class TimetableSlot(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val subjectId: Long,
+    val dayOfWeek: Int, // 1 monday to 7 sunday
+    val startMinute: Int, // minutes after midnight
+    val endMinute: Int,
+    val week: Int = 0, // 0 every week, 1 week A, 2 week B
+    val kind: String? = null, // lecture, lab and so on
+    val room: String? = null, // overrides the subject room
+)
+
+@Serializable
+@Entity(tableName = "terms")
+data class Term(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val startDay: Long, // epoch day
+    val endDay: Long,
 )

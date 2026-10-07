@@ -1,90 +1,235 @@
 package com.forsakenblank.atlas.ui
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.NavHostController
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.forsakenblank.atlas.data.AppSettings
+import com.forsakenblank.atlas.data.BarLabels
+import com.forsakenblank.atlas.data.Section
+import com.forsakenblank.atlas.data.Transition
 import com.forsakenblank.atlas.ui.calendar.CalendarScreen
+import com.forsakenblank.atlas.ui.calendar.EventEditorScreen
+import com.forsakenblank.atlas.ui.common.atlasApp
 import com.forsakenblank.atlas.ui.explorer.ExplorerScreen
 import com.forsakenblank.atlas.ui.explorer.TrashScreen
+import com.forsakenblank.atlas.ui.focus.FocusScreen
 import com.forsakenblank.atlas.ui.home.HomeScreen
 import com.forsakenblank.atlas.ui.notes.NoteEditorScreen
 import com.forsakenblank.atlas.ui.notes.NotesScreen
+import com.forsakenblank.atlas.ui.onboarding.StarterPacksScreen
+import com.forsakenblank.atlas.ui.settings.SettingsCategoryScreen
 import com.forsakenblank.atlas.ui.settings.SettingsScreen
+import com.forsakenblank.atlas.ui.settings.ThemeEditorScreen
+import com.forsakenblank.atlas.ui.settings.ThemesScreen
+import com.forsakenblank.atlas.ui.tasks.TasksScreen
+import com.forsakenblank.atlas.ui.theme.LocalSettings
+import com.forsakenblank.atlas.ui.timetable.SubjectsScreen
+import com.forsakenblank.atlas.ui.timetable.TermsScreen
+import com.forsakenblank.atlas.ui.timetable.TimetableScreen
+import com.forsakenblank.atlas.ui.tools.ToolScreen
+import com.forsakenblank.atlas.ui.tools.ToolsScreen
 import com.forsakenblank.atlas.ui.track.TrackScreen
 import com.forsakenblank.atlas.ui.track.TrackerDetailScreen
 
-enum class Tab(val route: String, val label: String, val icon: ImageVector, val selectedIcon: ImageVector) {
-    Notes("notes", "Notes", Icons.Outlined.EditNote, Icons.Filled.EditNote),
-    Calendar("calendar", "Calendar", Icons.Outlined.CalendarMonth, Icons.Filled.CalendarMonth),
-    Home("home", "Home", Icons.Outlined.Home, Icons.Filled.Home),
-    Track("track", "Track", Icons.Outlined.Insights, Icons.Filled.Insights),
-    Explorer("explorer", "Explorer", Icons.Outlined.FolderOpen, Icons.Filled.FolderOpen),
+fun sectionIcon(section: Section, selected: Boolean): ImageVector = when (section) {
+    Section.HOME -> if (selected) Icons.Filled.Home else Icons.Outlined.Home
+    Section.NOTES -> if (selected) Icons.Filled.EditNote else Icons.Outlined.EditNote
+    Section.CALENDAR -> if (selected) Icons.Filled.CalendarMonth else Icons.Outlined.CalendarMonth
+    Section.TIMETABLE -> if (selected) Icons.Filled.School else Icons.Outlined.School
+    Section.TASKS -> if (selected) Icons.Filled.Checklist else Icons.Outlined.Checklist
+    Section.TRACK -> if (selected) Icons.Filled.Insights else Icons.Outlined.Insights
+    Section.FOCUS -> if (selected) Icons.Filled.Timer else Icons.Outlined.Timer
+    Section.TOOLS -> if (selected) Icons.Filled.Calculate else Icons.Outlined.Calculate
+    Section.EXPLORER -> if (selected) Icons.Filled.FolderOpen else Icons.Outlined.FolderOpen
 }
 
-// one snackbar host for the whole app so "Logged. Undo" survives tab switches
-val LocalSnackbar = staticCompositionLocalOf { SnackbarHostState() }
+fun AppSettings.visibleTabs(): List<Section> = tabs.filter { it !in hiddenSections }.distinct().ifEmpty { listOf(Section.HOME) }
 
-class AtlasNavigator(private val nav: NavHostController) {
-    fun openNote(id: Long) = nav.navigate("note/$id")
-    fun openTracker(id: Long) = nav.navigate("tracker/$id")
-    fun openSettings() = nav.navigate("settings")
-    fun openTrash() = nav.navigate("trash")
-    fun back() = nav.popBackStack()
+private fun enterFor(transition: Transition, ms: Int, forward: Boolean): EnterTransition = when (transition) {
+    Transition.SLIDE -> slideInHorizontally(tween(ms)) { if (forward) it else -it / 3 }
+    Transition.FADE -> fadeIn(tween(ms))
+    Transition.ZOOM -> scaleIn(tween(ms), initialScale = if (forward) 0.9f else 1.06f) + fadeIn(tween(ms))
+    Transition.SLIDE_UP -> if (forward) slideInVertically(tween(ms)) { it / 4 } + fadeIn(tween(ms)) else fadeIn(tween(ms))
+    Transition.SHARED_AXIS -> slideInHorizontally(tween(ms)) { (if (forward) it else -it) / 5 } + fadeIn(tween(ms))
+    Transition.NONE -> EnterTransition.None
+}
+
+private fun exitFor(transition: Transition, ms: Int, forward: Boolean): ExitTransition = when (transition) {
+    Transition.SLIDE -> slideOutHorizontally(tween(ms)) { if (forward) -it / 3 else it }
+    Transition.FADE -> fadeOut(tween(ms))
+    Transition.ZOOM -> scaleOut(tween(ms), targetScale = if (forward) 1.06f else 0.9f) + fadeOut(tween(ms))
+    Transition.SLIDE_UP -> if (forward) fadeOut(tween(ms)) else slideOutVertically(tween(ms)) { it / 4 } + fadeOut(tween(ms))
+    Transition.SHARED_AXIS -> slideOutHorizontally(tween(ms)) { (if (forward) -it else it) / 5 } + fadeOut(tween(ms))
+    Transition.NONE -> ExitTransition.None
+}
+
+// works out which animation a route change gets from the motion settings
+private class Motion(private val settings: () -> AppSettings) {
+
+    private fun pick(scope: AnimatedContentTransitionScope<NavBackStackEntry>, pop: Boolean): Triple<Transition, Int, Boolean> {
+        val s = settings()
+        val ms = (300 * s.animationSpeed).toInt().coerceIn(60, 1200)
+        val tabs = s.visibleTabs()
+        val from = Section.fromRoute(scope.initialState.destination.route)
+        val to = Section.fromRoute(scope.targetState.destination.route)
+        if (s.reduceMotion) return Triple(Transition.NONE, ms, true)
+        if (from != null && to != null && from in tabs && to in tabs) {
+            // tabs slide the way the bar reads, left to right
+            return Triple(s.tabTransition, ms, tabs.indexOf(to) >= tabs.indexOf(from))
+        }
+        return Triple(s.screenTransition, ms, !pop)
+    }
+
+    fun enter(scope: AnimatedContentTransitionScope<NavBackStackEntry>, pop: Boolean): EnterTransition {
+        val (t, ms, forward) = pick(scope, pop)
+        return enterFor(t, ms, forward)
+    }
+
+    fun exit(scope: AnimatedContentTransitionScope<NavBackStackEntry>, pop: Boolean): ExitTransition {
+        val (t, ms, forward) = pick(scope, pop)
+        return exitFor(t, ms, forward)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AtlasRoot() {
+    val settings = LocalSettings.current
+    val app = atlasApp()
     val nav = rememberNavController()
     val navigator = remember(nav) { AtlasNavigator(nav) }
     val snackbar = remember { SnackbarHostState() }
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    val tab = Tab.entries.firstOrNull { it.route == route }
+    val tabs = settings.visibleTabs()
+    val section = Section.fromRoute(route)
+    val onTab = section != null && section in tabs
+
+    var sectionsMenu by remember { mutableStateOf(false) }
+    val latest by rememberUpdatedState(settings)
+    val motion = remember { Motion { latest } }
+
+    // the start screen is picked once, a section that is not a tab opens on top of the first tab
+    val wanted = rememberSaveable {
+        (settings.startSection ?: settings.lastSection).takeIf { it !in settings.hiddenSections } ?: Section.HOME
+    }
+    val startTab = rememberSaveable { if (wanted in tabs) wanted else if (Section.HOME in tabs) Section.HOME else tabs.first() }
+    var openedStart by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!openedStart && wanted != startTab) navigator.openSection(wanted, isTab = false)
+        openedStart = true
+    }
+    LaunchedEffect(section) {
+        if (section != null && settings.startSection == null && section != settings.lastSection) {
+            app.updateSettings { it.copy(lastSection = section) }
+        }
+    }
 
     CompositionLocalProvider(LocalSnackbar provides snackbar) {
         Scaffold(
             topBar = {
-                if (tab != null) {
+                if (section != null) {
                     TopAppBar(
-                        title = { Text(if (tab == Tab.Home) "Atlas" else tab.label) },
+                        title = { Text(if (section == Section.HOME) "Atlas" else section.label) },
+                        navigationIcon = {
+                            if (!onTab) {
+                                IconButton(onClick = navigator::back) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                                }
+                            }
+                        },
                         actions = {
+                            // every section that is not a tab stays one tap away from anywhere
+                            val others = Section.entries.filter { it !in tabs && it !in settings.hiddenSections && it != section }
+                            if (others.isNotEmpty()) {
+                                Box {
+                                    IconButton(onClick = { sectionsMenu = true }) {
+                                        Icon(Icons.Outlined.Apps, contentDescription = "All sections")
+                                    }
+                                    DropdownMenu(expanded = sectionsMenu, onDismissRequest = { sectionsMenu = false }) {
+                                        others.forEach { other ->
+                                            DropdownMenuItem(
+                                                text = { Text(other.label) },
+                                                leadingIcon = { Icon(sectionIcon(other, selected = false), contentDescription = null) },
+                                                onClick = {
+                                                    sectionsMenu = false
+                                                    navigator.openSection(other, isTab = false)
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             IconButton(onClick = navigator::openSettings) {
                                 Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                             }
@@ -93,54 +238,107 @@ fun AtlasRoot() {
                 }
             },
             bottomBar = {
-                if (tab != null) {
-                    NavigationBar {
-                        Tab.entries.forEach { t ->
-                            NavigationBarItem(
-                                selected = t == tab,
-                                onClick = {
-                                    nav.navigate(t.route) {
-                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
-                                icon = { Icon(if (t == tab) t.selectedIcon else t.icon, contentDescription = t.label) },
-                                label = { Text(t.label) },
-                            )
-                        }
-                    }
+                if (onTab && tabs.size > 1) {
+                    BottomBar(tabs = tabs, current = section, settings = settings) { navigator.openSection(it, isTab = true) }
                 }
             },
             snackbarHost = { SnackbarHost(snackbar) },
-            // the bars handle system insets, detail screens bring their own scaffold
+            // the bars handle system insets, pages bring their own scaffold
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
         ) { padding ->
             NavHost(
                 navController = nav,
-                startDestination = Tab.Home.route,
-                modifier = Modifier.padding(padding),
+                startDestination = startTab.route,
+                modifier = Modifier
+                    .padding(padding)
+                    .then(if (section != null && !(onTab && tabs.size > 1)) Modifier.navigationBarsPadding() else Modifier),
+                enterTransition = { motion.enter(this, pop = false) },
+                exitTransition = { motion.exit(this, pop = false) },
+                popEnterTransition = { motion.enter(this, pop = true) },
+                popExitTransition = { motion.exit(this, pop = true) },
             ) {
-                composable(Tab.Home.route) { HomeScreen(navigator) }
-                composable(Tab.Notes.route) { NotesScreen(navigator) }
-                composable(Tab.Calendar.route) { CalendarScreen() }
-                composable(Tab.Track.route) { TrackScreen(navigator) }
-                composable(Tab.Explorer.route) { ExplorerScreen(navigator) }
-                composable(
-                    "note/{id}",
-                    arguments = listOf(navArgument("id") { type = NavType.LongType }),
-                ) { entry ->
+                composable(Section.HOME.route) { HomeScreen(navigator) }
+                composable(Section.NOTES.route) { NotesScreen(navigator) }
+                composable(Section.CALENDAR.route) { CalendarScreen(navigator) }
+                composable(Section.TIMETABLE.route) { TimetableScreen(navigator) }
+                composable(Section.TASKS.route) { TasksScreen(navigator) }
+                composable(Section.TRACK.route) { TrackScreen(navigator) }
+                composable(Section.FOCUS.route) { FocusScreen(navigator) }
+                composable(Section.TOOLS.route) { ToolsScreen(navigator) }
+                composable(Section.EXPLORER.route) { ExplorerScreen(navigator) }
+
+                composable(Routes.NOTE, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
                     NoteEditorScreen(entry.arguments!!.getLong("id"), navigator)
                 }
-                composable(
-                    "tracker/{id}",
-                    arguments = listOf(navArgument("id") { type = NavType.LongType }),
-                ) { entry ->
+                composable(Routes.TRACKER, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
                     TrackerDetailScreen(entry.arguments!!.getLong("id"), navigator)
                 }
-                composable("settings") { SettingsScreen(navigator) }
-                composable("trash") { TrashScreen(navigator) }
+                composable(Routes.SETTINGS) { SettingsScreen(navigator) }
+                composable(Routes.SETTINGS_CATEGORY, arguments = listOf(navArgument("category") { type = NavType.StringType })) { entry ->
+                    SettingsCategoryScreen(entry.arguments?.getString("category").orEmpty(), navigator)
+                }
+                composable(Routes.THEMES) { ThemesScreen(navigator) }
+                composable(Routes.THEME_EDITOR, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                    ThemeEditorScreen(entry.arguments?.getString("id") ?: "new", navigator)
+                }
+                composable(Routes.TRASH) { TrashScreen(navigator) }
+                composable(
+                    Routes.EVENT,
+                    arguments = listOf(
+                        navArgument("id") { type = NavType.LongType },
+                        navArgument("day") {
+                            type = NavType.LongType
+                            defaultValue = 0L
+                        },
+                    ),
+                ) { entry ->
+                    EventEditorScreen(entry.arguments!!.getLong("id"), entry.arguments!!.getLong("day"), navigator)
+                }
+                composable(Routes.SUBJECTS) { SubjectsScreen(navigator) }
+                composable(Routes.TERMS) { TermsScreen(navigator) }
+                composable(Routes.STARTER_PACKS) { StarterPacksScreen(navigator) }
+                composable(Routes.TOOL, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                    ToolScreen(entry.arguments?.getString("id").orEmpty(), navigator)
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun BottomBar(tabs: List<Section>, current: Section?, settings: AppSettings, onOpen: (Section) -> Unit) {
+    val bar: @Composable () -> Unit = {
+        NavigationBar(
+            containerColor = if (settings.floatingBar) Color.Transparent else NavigationBarDefaults.containerColor,
+            tonalElevation = if (settings.floatingBar) 0.dp else NavigationBarDefaults.Elevation,
+            windowInsets = if (settings.floatingBar) WindowInsets(0, 0, 0, 0) else NavigationBarDefaults.windowInsets,
+        ) {
+            tabs.forEach { tab ->
+                val selected = tab == current
+                NavigationBarItem(
+                    selected = selected,
+                    onClick = { if (!selected) onOpen(tab) },
+                    icon = { Icon(sectionIcon(tab, selected), contentDescription = tab.label) },
+                    label = if (settings.barLabels == BarLabels.NEVER) null else {
+                        { Text(tab.label, maxLines = 1) }
+                    },
+                    alwaysShowLabel = settings.barLabels == BarLabels.ALWAYS,
+                )
+            }
+        }
+    }
+    if (settings.floatingBar) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            tonalElevation = 3.dp,
+            shadowElevation = 8.dp,
+            modifier = Modifier
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            bar()
+        }
+    } else {
+        bar()
     }
 }
