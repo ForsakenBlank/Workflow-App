@@ -26,9 +26,12 @@ data class Backup(
     // added in version 3
     val sheets: List<SheetBody> = emptyList(),
     val countdowns: List<Countdown> = emptyList(),
+    // added in version 4
+    val moneyAccounts: List<MoneyAccount> = emptyList(),
+    val moneyEntries: List<MoneyEntry> = emptyList(),
 ) {
     companion object {
-        const val CURRENT_VERSION = 3
+        const val CURRENT_VERSION = 4
     }
 }
 

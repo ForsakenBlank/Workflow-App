@@ -8,6 +8,7 @@ enum class Section(val route: String, val label: String, val blurb: String) {
     TIMETABLE("timetable", "Timetable", "Your weekly classes"),
     TASKS("tasks", "Tasks", "To dos with due dates"),
     COUNTDOWNS("countdowns", "Countdowns", "Birthdays and big dates"),
+    MONEY("money", "Money", "Accounts, spending and tax"),
     TRACK("track", "Track", "Trackers, streaks and charts"),
     FOCUS("focus", "Focus", "Pomodoro and deep work timer"),
     TOOLS("tools", "Tools", "Dice, odds and calculators"),

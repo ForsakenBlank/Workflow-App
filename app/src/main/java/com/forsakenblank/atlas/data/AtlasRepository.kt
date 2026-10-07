@@ -22,6 +22,7 @@ class AtlasRepository(private val db: AtlasDatabase) {
     private val timetable = db.timetable()
     private val sheets = db.sheets()
     private val countdowns = db.countdowns()
+    private val money = db.money()
 
     // explorer
 
@@ -378,6 +379,43 @@ class AtlasRepository(private val db: AtlasDatabase) {
 
     suspend fun deleteCountdown(id: Long) = countdowns.delete(id)
 
+    // money
+
+    fun moneyAccounts(): Flow<List<MoneyAccount>> = money.accounts()
+
+    fun moneyEntries(): Flow<List<MoneyEntry>> = money.entries()
+
+    suspend fun moneyAccount(id: Long): MoneyAccount? = money.account(id)
+
+    suspend fun moneyEntry(id: Long): MoneyEntry? = money.entry(id)
+
+    suspend fun saveMoneyAccount(account: MoneyAccount): Long {
+        val id = money.upsertAccount(account)
+        return if (account.id != 0L) account.id else id
+    }
+
+    // entries of the account go with it
+    suspend fun deleteMoneyAccount(id: Long) = money.deleteAccount(id)
+
+    suspend fun saveMoneyEntry(entry: MoneyEntry): Long {
+        val id = money.upsertEntry(entry)
+        return if (entry.id != 0L) entry.id else id
+    }
+
+    suspend fun deleteMoneyEntry(entry: MoneyEntry) {
+        val transfer = entry.transferId
+        if (transfer != null) money.deleteTransfer(transfer) else money.deleteEntry(entry.id)
+    }
+
+    // two entries that cancel out, the shared id is the time so it will not clash with another transfer
+    suspend fun moneyTransfer(fromId: Long, toId: Long, day: Long, pence: Long, note: String?) {
+        val link = System.nanoTime()
+        db.withTransaction {
+            money.upsertEntry(MoneyEntry(accountId = fromId, day = day, amountPence = -pence, category = "Transfer", note = note, transferId = link))
+            money.upsertEntry(MoneyEntry(accountId = toId, day = day, amountPence = pence, category = "Transfer", note = note, transferId = link))
+        }
+    }
+
     // starter packs
 
     suspend fun addStarterPack(pack: StarterPack) {
@@ -432,6 +470,8 @@ class AtlasRepository(private val db: AtlasDatabase) {
         terms = timetable.allTerms(),
         sheets = sheets.all(),
         countdowns = countdowns.allOnce(),
+        moneyAccounts = money.allAccounts(),
+        moneyEntries = money.allEntries(),
     )
 
     suspend fun restoreSnapshot(backup: Backup) {
@@ -457,6 +497,9 @@ class AtlasRepository(private val db: AtlasDatabase) {
             timetable.insertTerms(backup.terms)
             countdowns.clear()
             countdowns.insertAll(backup.countdowns)
+            money.clear() // entries go with their accounts
+            money.insertAccounts(backup.moneyAccounts)
+            money.insertEntries(backup.moneyEntries)
         }
     }
 

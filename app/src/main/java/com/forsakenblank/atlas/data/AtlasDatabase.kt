@@ -45,9 +45,9 @@ class Converters {
     entities = [
         Item::class, NoteBody::class, Tracker::class, LogEntry::class, Tag::class, ItemTag::class,
         Event::class, Task::class, Subject::class, TimetableSlot::class, Term::class,
-        SheetBody::class, Countdown::class,
+        SheetBody::class, Countdown::class, MoneyAccount::class, MoneyEntry::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -61,6 +61,7 @@ abstract class AtlasDatabase : RoomDatabase() {
     abstract fun timetable(): TimetableDao
     abstract fun sheets(): SheetDao
     abstract fun countdowns(): CountdownDao
+    abstract fun money(): MoneyDao
 
     companion object {
         fun build(context: Context): AtlasDatabase =
@@ -124,7 +125,26 @@ abstract class AtlasDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        // version 4 adds the money accounts and their entries
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `money_accounts` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `openingPence` INTEGER NOT NULL, `color` INTEGER, " +
+                        "`sortOrder` INTEGER NOT NULL, `created` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `money_entries` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`accountId` INTEGER NOT NULL, `day` INTEGER NOT NULL, `amountPence` INTEGER NOT NULL, " +
+                        "`category` TEXT, `note` TEXT, `transferId` INTEGER, `created` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`accountId`) REFERENCES `money_accounts`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_money_entries_accountId` ON `money_entries` (`accountId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_money_entries_day` ON `money_entries` (`day`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
     }
 }
 

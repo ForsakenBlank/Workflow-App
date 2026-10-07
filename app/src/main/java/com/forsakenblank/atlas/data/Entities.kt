@@ -201,3 +201,33 @@ data class Countdown(
     val remind: Boolean = true,
     val created: Long = System.currentTimeMillis(),
 )
+
+// a pot of money like a current account, savings or cash
+@Serializable
+@Entity(tableName = "money_accounts")
+data class MoneyAccount(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val openingPence: Long = 0, // what was in it before the first entry
+    val color: Int? = null,
+    val sortOrder: Int = 0,
+    val created: Long = System.currentTimeMillis(),
+)
+
+// one bit of money moving, positive is coming in and negative is going out
+@Serializable
+@Entity(
+    tableName = "money_entries",
+    indices = [Index("accountId"), Index("day")],
+    foreignKeys = [ForeignKey(entity = MoneyAccount::class, parentColumns = ["id"], childColumns = ["accountId"], onDelete = ForeignKey.CASCADE)],
+)
+data class MoneyEntry(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val accountId: Long,
+    val day: Long, // epoch day, so past dates are just a smaller number
+    val amountPence: Long,
+    val category: String? = null,
+    val note: String? = null,
+    val transferId: Long? = null, // both halves of a transfer share this, they stay out of earning and spending totals
+    val created: Long = System.currentTimeMillis(),
+)

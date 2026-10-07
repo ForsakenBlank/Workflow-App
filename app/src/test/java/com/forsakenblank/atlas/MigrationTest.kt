@@ -12,6 +12,7 @@ import com.forsakenblank.atlas.data.AtlasRepository
 import com.forsakenblank.atlas.data.Countdown
 import com.forsakenblank.atlas.data.CountdownKind
 import com.forsakenblank.atlas.data.Event
+import com.forsakenblank.atlas.data.MoneyAccount
 import com.forsakenblank.atlas.data.Subject
 import com.forsakenblank.atlas.data.Task
 import com.forsakenblank.atlas.data.TimetableSlot
@@ -165,6 +166,17 @@ class MigrationTest {
         assertTrue(countdown.remind)
         assertEquals(countdownId, repo.saveCountdown(countdown.copy(title = "Beach")))
         assertEquals("Beach", db.countdowns().allOnce().single().title)
+
+        // money accounts keep a transfer balanced and go with their entries
+        val current = repo.saveMoneyAccount(MoneyAccount(name = "Current", openingPence = 10_000))
+        val savings = repo.saveMoneyAccount(MoneyAccount(name = "Savings"))
+        repo.moneyTransfer(current, savings, day = 20_000, pence = 2_500, note = null)
+        assertEquals(2, repo.snapshot().moneyEntries.size)
+        assertEquals(0L, repo.snapshot().moneyEntries.sumOf { it.amountPence })
+        repo.deleteMoneyEntry(repo.snapshot().moneyEntries.first())
+        assertEquals(0, repo.snapshot().moneyEntries.size)
+        repo.deleteMoneyAccount(current)
+        assertEquals(1, repo.snapshot().moneyAccounts.size)
         db.close()
     }
 }

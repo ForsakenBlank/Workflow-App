@@ -402,3 +402,49 @@ interface CountdownDao {
     @Query("DELETE FROM countdowns")
     suspend fun clear()
 }
+
+@Dao
+interface MoneyDao {
+    @Query("SELECT * FROM money_accounts ORDER BY sortOrder, id")
+    fun accounts(): Flow<List<MoneyAccount>>
+
+    @Query("SELECT * FROM money_entries ORDER BY day DESC, id DESC")
+    fun entries(): Flow<List<MoneyEntry>>
+
+    @Query("SELECT * FROM money_accounts WHERE id = :id")
+    suspend fun account(id: Long): MoneyAccount?
+
+    @Query("SELECT * FROM money_entries WHERE id = :id")
+    suspend fun entry(id: Long): MoneyEntry?
+
+    @Upsert
+    suspend fun upsertAccount(account: MoneyAccount): Long
+
+    @Upsert
+    suspend fun upsertEntry(entry: MoneyEntry): Long
+
+    @Query("DELETE FROM money_accounts WHERE id = :id")
+    suspend fun deleteAccount(id: Long)
+
+    @Query("DELETE FROM money_entries WHERE id = :id")
+    suspend fun deleteEntry(id: Long)
+
+    // deleting one half of a transfer takes the other half with it
+    @Query("DELETE FROM money_entries WHERE transferId = :transferId")
+    suspend fun deleteTransfer(transferId: Long)
+
+    @Query("SELECT * FROM money_accounts")
+    suspend fun allAccounts(): List<MoneyAccount>
+
+    @Query("SELECT * FROM money_entries")
+    suspend fun allEntries(): List<MoneyEntry>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAccounts(accounts: List<MoneyAccount>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEntries(entries: List<MoneyEntry>)
+
+    @Query("DELETE FROM money_accounts")
+    suspend fun clear()
+}

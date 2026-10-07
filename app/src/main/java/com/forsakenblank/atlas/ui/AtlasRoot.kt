@@ -26,10 +26,12 @@ import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Cake
 import androidx.compose.material.icons.outlined.Calculate
@@ -91,6 +93,8 @@ import com.forsakenblank.atlas.ui.explorer.ExplorerScreen
 import com.forsakenblank.atlas.ui.explorer.TrashScreen
 import com.forsakenblank.atlas.ui.focus.FocusScreen
 import com.forsakenblank.atlas.ui.home.HomeScreen
+import com.forsakenblank.atlas.ui.money.MoneyScreen
+import com.forsakenblank.atlas.ui.money.TaxScreen
 import com.forsakenblank.atlas.ui.notes.NoteEditorScreen
 import com.forsakenblank.atlas.ui.notes.NotesScreen
 import com.forsakenblank.atlas.ui.sheets.SheetEditorScreen
@@ -119,6 +123,7 @@ fun sectionIcon(section: Section, selected: Boolean): ImageVector = when (sectio
     Section.TIMETABLE -> if (selected) Icons.Filled.School else Icons.Outlined.School
     Section.TASKS -> if (selected) Icons.Filled.Checklist else Icons.Outlined.Checklist
     Section.COUNTDOWNS -> if (selected) Icons.Filled.Cake else Icons.Outlined.Cake
+    Section.MONEY -> if (selected) Icons.Filled.AccountBalanceWallet else Icons.Outlined.AccountBalanceWallet
     Section.TRACK -> if (selected) Icons.Filled.Insights else Icons.Outlined.Insights
     Section.FOCUS -> if (selected) Icons.Filled.Timer else Icons.Outlined.Timer
     Section.TOOLS -> if (selected) Icons.Filled.Calculate else Icons.Outlined.Calculate
@@ -176,13 +181,26 @@ private class Motion(private val settings: () -> AppSettings) {
         return Triple(s.screenTransition, ms, !pop)
     }
 
+    // switching tabs should never leave the old tab sitting there, so it is gone in a frame
+    // and the new one fades or slides in on its own
+    private fun isTabSwitch(scope: AnimatedContentTransitionScope<NavBackStackEntry>): Boolean {
+        val tabs = settings().visibleTabs()
+        val from = Section.fromRoute(scope.initialState.destination.route)
+        val to = Section.fromRoute(scope.targetState.destination.route)
+        return from != null && to != null && from in tabs && to in tabs
+    }
+
     fun enter(scope: AnimatedContentTransitionScope<NavBackStackEntry>, pop: Boolean): EnterTransition {
         val (t, ms, forward) = pick(scope, pop)
+        if (isTabSwitch(scope) && t != Transition.SLIDE && t != Transition.NONE) {
+            return fadeIn(tween((ms * 0.5f).toInt().coerceIn(60, 220)))
+        }
         return enterFor(t, ms, forward)
     }
 
     fun exit(scope: AnimatedContentTransitionScope<NavBackStackEntry>, pop: Boolean): ExitTransition {
         val (t, ms, forward) = pick(scope, pop)
+        if (isTabSwitch(scope) && t != Transition.SLIDE && t != Transition.NONE) return fadeOut(tween(1))
         return exitFor(t, ms, forward)
     }
 }
@@ -293,6 +311,8 @@ fun AtlasRoot() {
                 composable(Section.TIMETABLE.route) { TimetableScreen(navigator) }
                 composable(Section.TASKS.route) { TasksScreen(navigator) }
                 composable(Section.COUNTDOWNS.route) { CountdownsScreen(navigator) }
+                composable(Section.MONEY.route) { MoneyScreen(navigator) }
+                composable(Routes.TAX) { TaxScreen(navigator) }
                 composable(Section.TRACK.route) { TrackScreen(navigator) }
                 composable(Section.FOCUS.route) { FocusScreen(navigator) }
                 composable(Section.TOOLS.route) { ToolsScreen(navigator) }
