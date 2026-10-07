@@ -3,17 +3,25 @@ package com.forsakenblank.atlas
 import android.app.Application
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
+import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteOpenHelper
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.forsakenblank.atlas.data.AtlasDatabase
+import com.forsakenblank.atlas.data.AtlasRepository
+import com.forsakenblank.atlas.data.Countdown
+import com.forsakenblank.atlas.data.CountdownKind
 import com.forsakenblank.atlas.data.Event
 import com.forsakenblank.atlas.data.Subject
 import com.forsakenblank.atlas.data.Task
 import com.forsakenblank.atlas.data.TimetableSlot
 import com.forsakenblank.atlas.data.TrackerKind
+import com.forsakenblank.atlas.util.Sheet
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -99,6 +107,64 @@ class MigrationTest {
         // slots go when their subject is deleted
         db.timetable().deleteSubject(subjectId)
         assertEquals(0, db.timetable().allSlots().size)
+        db.close()
+    }
+
+    // runs the real 1 to 2 migration and stops there, like a phone still on 0.2.0
+    private fun createVersionTwo() {
+        createVersionOne()
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(app)
+                .name(name)
+                .callback(object : SupportSQLiteOpenHelper.Callback(2) {
+                    override fun onCreate(db: SupportSQLiteDatabase) = Unit
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                        AtlasDatabase.MIGRATIONS.first { it.startVersion == 1 && it.endVersion == 2 }.migrate(db)
+                    }
+                })
+                .build()
+        )
+        val db = helper.writableDatabase
+        db.execSQL("INSERT INTO events (id, title, startsAt, endsAt, allDay, repeatRule, created) VALUES (1, 'Dentist', 10, 20, 0, 'NONE', 1)")
+        db.execSQL("INSERT INTO tasks (id, title, priority, done, repeatRule, created) VALUES (1, 'Revise', 0, 0, 'NONE', 1)")
+        helper.close()
+    }
+
+    @Test
+    fun versionTwoUpgradesToThree() = runBlocking {
+        createVersionTwo()
+        val db = Room.databaseBuilder(app, AtlasDatabase::class.java, name)
+            .addMigrations(*AtlasDatabase.MIGRATIONS)
+            .allowMainThreadQueries()
+            .build()
+
+        // old rows pick up the defaults of the new reminder columns
+        val event = db.events().get(1)!!
+        assertEquals("Dentist", event.title)
+        assertNull(event.reminderMinutes)
+        assertTrue(db.tasks().get(1)!!.remind)
+        assertEquals("Shopping", db.items().get(7)?.name)
+
+        // a sheet saves, reads back and goes with its item
+        val repo = AtlasRepository(db)
+        val sheetId = repo.createSheet(parentId = 1, name = "Budget")
+        assertEquals(20, repo.sheet(sheetId)!!.rows)
+        repo.saveSheet(sheetId, Sheet().withCell(0, 0, "Rent").withCell(0, 1, "=950*12"))
+        val sheet = repo.sheet(sheetId)!!
+        assertEquals("Rent", sheet.raw(0, 0))
+        assertEquals("=950*12", sheet.raw(0, 1))
+        assertEquals(1, repo.snapshot().sheets.size)
+        db.items().deleteForever(listOf(sheetId))
+        assertNull(db.sheets().get(sheetId))
+
+        // and so does a countdown
+        val countdownId = repo.saveCountdown(Countdown(title = "Holiday", date = 20_500, kind = CountdownKind.HOLIDAY))
+        val countdown = repo.countdown(countdownId)!!
+        assertEquals(CountdownKind.HOLIDAY, countdown.kind)
+        assertTrue(countdown.remind)
+        assertEquals(countdownId, repo.saveCountdown(countdown.copy(title = "Beach")))
+        assertEquals("Beach", db.countdowns().allOnce().single().title)
         db.close()
     }
 }

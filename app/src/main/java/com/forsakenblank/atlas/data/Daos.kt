@@ -16,6 +16,11 @@ data class NoteRow(
     val text: String?,
 )
 
+data class SheetRow(
+    @Embedded val item: Item,
+    val json: String?,
+)
+
 // one row per tracker per local day that has at least one log
 data class TrackerDay(
     val trackerId: Long,
@@ -41,6 +46,9 @@ interface ItemDao {
 
     @Query("SELECT * FROM items WHERE parentId = :parentId")
     suspend fun childrenOnce(parentId: Long): List<Item>
+
+    @Query("SELECT * FROM items WHERE deletedAt IS NULL AND name LIKE '%' || :query || '%' ORDER BY updated DESC LIMIT 50")
+    fun search(query: String): Flow<List<Item>>
 
     @Query("SELECT * FROM items WHERE id = :id")
     suspend fun get(id: Long): Item?
@@ -341,4 +349,56 @@ interface TimetableDao {
 
     @Query("DELETE FROM terms")
     suspend fun clearTerms()
+}
+
+@Dao
+interface SheetDao {
+    @Query(
+        """
+        SELECT items.*, sheets.json AS json FROM items
+        LEFT JOIN sheets ON sheets.itemId = items.id
+        WHERE items.type = 'SHEET' AND items.deletedAt IS NULL AND items.archived = 0
+        ORDER BY items.updated DESC
+        """
+    )
+    fun sheets(): Flow<List<SheetRow>>
+
+    @Query("SELECT * FROM sheets WHERE itemId = :itemId")
+    suspend fun get(itemId: Long): SheetBody?
+
+    @Query("SELECT * FROM sheets WHERE itemId = :itemId")
+    fun observe(itemId: Long): Flow<SheetBody?>
+
+    @Upsert
+    suspend fun upsert(body: SheetBody)
+
+    @Query("SELECT * FROM sheets")
+    suspend fun all(): List<SheetBody>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(bodies: List<SheetBody>)
+}
+
+@Dao
+interface CountdownDao {
+    @Query("SELECT * FROM countdowns ORDER BY date")
+    fun all(): Flow<List<Countdown>>
+
+    @Query("SELECT * FROM countdowns WHERE id = :id")
+    suspend fun get(id: Long): Countdown?
+
+    @Upsert
+    suspend fun upsert(c: Countdown): Long
+
+    @Query("DELETE FROM countdowns WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("SELECT * FROM countdowns")
+    suspend fun allOnce(): List<Countdown>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(countdowns: List<Countdown>)
+
+    @Query("DELETE FROM countdowns")
+    suspend fun clear()
 }

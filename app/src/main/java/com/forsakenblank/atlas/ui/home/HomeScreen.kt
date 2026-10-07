@@ -1,5 +1,6 @@
 package com.forsakenblank.atlas.ui.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,22 +17,34 @@ import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Cake
 import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.School
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,8 +52,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -48,7 +63,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.forsakenblank.atlas.data.AtlasRepository
+import com.forsakenblank.atlas.data.CountdownKind
 import com.forsakenblank.atlas.data.Event
+import com.forsakenblank.atlas.data.LongPress
 import com.forsakenblank.atlas.data.NoteRow
 import com.forsakenblank.atlas.data.Section
 import com.forsakenblank.atlas.data.Subject
@@ -56,10 +73,14 @@ import com.forsakenblank.atlas.data.Task
 import com.forsakenblank.atlas.data.Term
 import com.forsakenblank.atlas.data.TimetableSlot
 import com.forsakenblank.atlas.ui.AtlasNavigator
+import com.forsakenblank.atlas.ui.LocalSnackbar
 import com.forsakenblank.atlas.ui.common.AtlasCard
 import com.forsakenblank.atlas.ui.common.SectionTitle
+import com.forsakenblank.atlas.ui.common.SelectionBar
 import com.forsakenblank.atlas.ui.common.atlasViewModel
 import com.forsakenblank.atlas.ui.common.toItemColor
+import com.forsakenblank.atlas.ui.common.toggle
+import com.forsakenblank.atlas.ui.countdowns.CountdownStrip
 import com.forsakenblank.atlas.ui.sectionIcon
 import com.forsakenblank.atlas.ui.tasks.TaskEditorDialog
 import com.forsakenblank.atlas.ui.tasks.TaskRow
@@ -78,6 +99,9 @@ import com.forsakenblank.atlas.util.nowAndNext
 import com.forsakenblank.atlas.util.occursOn
 import com.forsakenblank.atlas.util.onDay
 import com.forsakenblank.atlas.util.startMillis
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
@@ -88,9 +112,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
 
 data class TodayPlan(
     val day: LocalDate = LocalDate.now(),
@@ -150,6 +171,16 @@ class HomeViewModel(private val repo: AtlasRepository) : ViewModel() {
     }
 
     suspend fun newNote(): Long = repo.createNote(parentId = null)
+
+    val countdowns = repo.countdowns().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun removeShortcuts(ids: Set<Long>, trash: Boolean) {
+        viewModelScope.launch { if (trash) repo.moveToTrash(ids) else repo.setOnHome(ids, false) }
+    }
+
+    fun undoRemove(ids: Set<Long>, trash: Boolean) {
+        viewModelScope.launch { if (trash) repo.restoreAll(ids) else repo.setOnHome(ids, true) }
+    }
 }
 
 private enum class QuickAdd { TASK, TRACKER }
@@ -160,6 +191,7 @@ fun HomeScreen(navigator: AtlasNavigator) {
     val shortcuts by vm.shortcuts.collectAsStateWithLifecycle()
     val pinned by vm.pinnedNotes.collectAsStateWithLifecycle()
     val plan by vm.today.collectAsStateWithLifecycle()
+    val countdowns by vm.countdowns.collectAsStateWithLifecycle()
     val minute by vm.minute.collectAsStateWithLifecycle()
     val settings = LocalSettings.current
     val tap = rememberTrackerTap()
@@ -167,6 +199,17 @@ fun HomeScreen(navigator: AtlasNavigator) {
     var addMenu by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf<QuickAdd?>(null) }
     var editingTask by remember { mutableStateOf<Task?>(null) }
+    var selected by remember { mutableStateOf(emptySet<Long>()) }
+    var confirmRemove by remember { mutableStateOf(false) }
+    val snackbar = LocalSnackbar.current
+    val selecting = selected.isNotEmpty()
+
+    // a shortcut can vanish while selected, for example when it is trashed from Track
+    LaunchedEffect(shortcuts) {
+        val ids = shortcuts.map { it.id }.toSet()
+        if (!ids.containsAll(selected)) selected = selected intersect ids
+    }
+    BackHandler(enabled = selecting) { selected = emptySet() }
 
     val classes = remember(plan, settings.twoWeekTimetable, settings.weekAStart) {
         classesOn(plan.day, plan.slots, plan.subjects, plan.terms, settings)
@@ -190,6 +233,16 @@ fun HomeScreen(navigator: AtlasNavigator) {
             if (settings.showNowNext) {
                 val upNext = nowNextLine(classes, plan.events, minute, settings.use24Hour)
                 if (upNext != null) fullWidth { NowNextCard(upNext) }
+            }
+
+            if (settings.showCountdowns && countdowns.isNotEmpty()) {
+                fullWidth {
+                    CountdownStrip(
+                        countdowns = countdowns,
+                        onOpen = { navigator.openCountdown(it.id) },
+                        onSeeAll = { navigator.openSection(Section.COUNTDOWNS, Section.COUNTDOWNS in settings.tabs) },
+                    )
+                }
             }
 
             if (settings.showSectionsRow && extraSections.isNotEmpty()) {
@@ -231,8 +284,16 @@ fun HomeScreen(navigator: AtlasNavigator) {
             items(shortcuts, key = { it.id }) { summary ->
                 TrackerButton(
                     summary = summary,
-                    onTap = { tap(summary) },
-                    onLongPress = { navigator.openTracker(summary.id) },
+                    onTap = { if (selecting) selected = selected.toggle(summary.id) else tap(summary) },
+                    onLongPress = {
+                        when {
+                            selecting -> selected = selected.toggle(summary.id)
+                            settings.shortcutLongPress == LongPress.SELECT -> selected = setOf(summary.id)
+                            else -> navigator.openTracker(summary.id)
+                        }
+                    },
+                    selecting = selecting,
+                    selected = summary.id in selected,
                 )
             }
 
@@ -244,7 +305,23 @@ fun HomeScreen(navigator: AtlasNavigator) {
             }
         }
 
-        if (settings.showQuickAdd) {
+        if (selecting) {
+            SelectionBar(
+                count = selected.size,
+                onClear = { selected = emptySet() },
+                onSelectAll = if (selected.size < shortcuts.size) ({ selected = shortcuts.map { it.id }.toSet() }) else null,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+            ) {
+                if (selected.size == 1) {
+                    IconButton(onClick = {
+                        val id = selected.first()
+                        selected = emptySet()
+                        navigator.openTracker(id)
+                    }) { Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = "Open tracker") }
+                }
+                IconButton(onClick = { confirmRemove = true }) { Icon(Icons.Outlined.Delete, contentDescription = "Remove") }
+            }
+        } else if (settings.showQuickAdd) {
             Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) {
                 FloatingActionButton(onClick = { addMenu = true }) {
                     Icon(Icons.Outlined.Add, contentDescription = "Add")
@@ -275,6 +352,14 @@ fun HomeScreen(navigator: AtlasNavigator) {
                         },
                     )
                     DropdownMenuItem(
+                        text = { Text("Birthday") },
+                        leadingIcon = { Icon(Icons.Outlined.Cake, contentDescription = null) },
+                        onClick = {
+                            addMenu = false
+                            navigator.openCountdown(null, CountdownKind.BIRTHDAY)
+                        },
+                    )
+                    DropdownMenuItem(
                         text = { Text("Tracker") },
                         leadingIcon = { Icon(Icons.Outlined.Insights, contentDescription = null) },
                         onClick = {
@@ -295,6 +380,64 @@ fun HomeScreen(navigator: AtlasNavigator) {
     editingTask?.let { task ->
         TaskEditorDialog(task = task, onDismiss = { editingTask = null })
     }
+    if (confirmRemove) {
+        RemoveShortcutsDialog(
+            count = selected.size,
+            trashDays = settings.trashDays,
+            onDismiss = { confirmRemove = false },
+        ) { trash ->
+            val ids = selected
+            confirmRemove = false
+            selected = emptySet()
+            vm.removeShortcuts(ids, trash)
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                val what = if (ids.size == 1) "1 shortcut" else "${ids.size} shortcuts"
+                val message = if (trash) "Moved $what to the trash" else "Removed $what from Home"
+                val result = snackbar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Short)
+                if (result == SnackbarResult.ActionPerformed) vm.undoRemove(ids, trash)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RemoveShortcutsDialog(count: Int, trashDays: Int, onDismiss: () -> Unit, onConfirm: (trash: Boolean) -> Unit) {
+    var trash by remember { mutableStateOf(false) }
+    val plural = count != 1
+    val kept = if (trashDays <= 0) "until you empty the trash" else "for $trashDays days"
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (plural) "Remove $count shortcuts?" else "Remove this shortcut?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    if (trash) {
+                        "The tracker${if (plural) "s" else ""} and all ${if (plural) "their" else "its"} history go to the trash. You can restore them $kept."
+                    } else {
+                        "${if (plural) "They come" else "It comes"} off Home. The tracker${if (plural) "s" else ""} and history stay in Track."
+                    },
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .toggleable(value = trash, role = Role.Checkbox, onValueChange = { trash = it }),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = trash, onCheckedChange = null)
+                    Text("Also move the tracker${if (plural) "s" else ""} to the trash", modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(trash) },
+                colors = ButtonDefaults.textButtonColors(contentColor = if (trash) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary),
+            ) { Text(if (trash) "Move to trash" else "Remove") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 private fun LazyGridScope.fullWidth(content: @Composable () -> Unit) {

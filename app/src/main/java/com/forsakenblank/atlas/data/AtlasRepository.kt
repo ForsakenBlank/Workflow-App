@@ -1,11 +1,13 @@
 package com.forsakenblank.atlas.data
 
 import androidx.room.withTransaction
+import com.forsakenblank.atlas.util.Sheet
 import com.forsakenblank.atlas.util.next
 import com.forsakenblank.atlas.util.startMillis
 import com.forsakenblank.atlas.util.startOfDay
 import com.forsakenblank.atlas.util.toLocalDate
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
@@ -18,6 +20,8 @@ class AtlasRepository(private val db: AtlasDatabase) {
     private val events = db.events()
     private val tasks = db.tasks()
     private val timetable = db.timetable()
+    private val sheets = db.sheets()
+    private val countdowns = db.countdowns()
 
     // explorer
 
@@ -28,6 +32,8 @@ class AtlasRepository(private val db: AtlasDatabase) {
     fun observeItem(id: Long): Flow<Item?> = items.observe(id)
 
     suspend fun item(id: Long): Item? = items.get(id)
+
+    fun searchItems(query: String): Flow<List<Item>> = items.search(query)
 
     suspend fun createFolder(name: String, parentId: Long?, color: Int? = null): Long =
         items.insert(Item(type = ItemType.FOLDER, parentId = parentId, name = name, color = color))
@@ -94,6 +100,20 @@ class AtlasRepository(private val db: AtlasDatabase) {
         }
     }
 
+    suspend fun moveToTrash(ids: Collection<Long>) {
+        items.setDeleted(ids.flatMap { listOf(it) + descendantsOf(it) }.distinct(), System.currentTimeMillis())
+    }
+
+    suspend fun restoreAll(ids: Collection<Long>) {
+        ids.mapNotNull { items.get(it) }.forEach { restore(it) }
+    }
+
+    suspend fun setOnHome(ids: Collection<Long>, show: Boolean) {
+        db.withTransaction {
+            ids.forEach { id -> trackers.get(id)?.let { trackers.update(it.copy(showOnHome = show)) } }
+        }
+    }
+
     suspend fun deleteForever(item: Item) {
         items.deleteForever(listOf(item.id) + descendantsOf(item.id))
         tags.dropUnused()
@@ -145,6 +165,29 @@ class AtlasRepository(private val db: AtlasDatabase) {
         }
         if (links.isNotEmpty()) tags.link(links)
         tags.dropUnused()
+    }
+
+    // sheets
+
+    fun sheets(): Flow<List<SheetRow>> = sheets.sheets()
+
+    suspend fun createSheet(parentId: Long?, name: String): Long = db.withTransaction {
+        val id = items.insert(Item(type = ItemType.SHEET, parentId = parentId, name = name))
+        sheets.upsert(SheetBody(id, Sheet().toJson()))
+        id
+    }
+
+    fun observeSheet(id: Long): Flow<Sheet?> = sheets.observe(id).map { body -> body?.let { Sheet.fromJson(it.json) } }
+
+    // null when the sheet is missing or could not be read
+    suspend fun sheet(id: Long): Sheet? = sheets.get(id)?.let { Sheet.fromJson(it.json) }
+
+    suspend fun saveSheet(id: Long, sheet: Sheet) {
+        db.withTransaction {
+            val item = items.get(id) ?: return@withTransaction
+            items.update(item.copy(updated = System.currentTimeMillis()))
+            sheets.upsert(SheetBody(id, sheet.toJson()))
+        }
     }
 
     // trackers
@@ -321,6 +364,20 @@ class AtlasRepository(private val db: AtlasDatabase) {
 
     suspend fun deleteTerm(id: Long) = timetable.deleteTerm(id)
 
+    // countdowns
+
+    fun countdowns(): Flow<List<Countdown>> = countdowns.all()
+
+    suspend fun countdown(id: Long): Countdown? = countdowns.get(id)
+
+    // gives back the id, upsert itself returns -1 when it updated a row
+    suspend fun saveCountdown(countdown: Countdown): Long {
+        val id = countdowns.upsert(countdown)
+        return if (countdown.id != 0L) countdown.id else id
+    }
+
+    suspend fun deleteCountdown(id: Long) = countdowns.delete(id)
+
     // starter packs
 
     suspend fun addStarterPack(pack: StarterPack) {
@@ -373,6 +430,8 @@ class AtlasRepository(private val db: AtlasDatabase) {
         subjects = timetable.allSubjects(),
         slots = timetable.allSlots(),
         terms = timetable.allTerms(),
+        sheets = sheets.all(),
+        countdowns = countdowns.allOnce(),
     )
 
     suspend fun restoreSnapshot(backup: Backup) {
@@ -382,6 +441,7 @@ class AtlasRepository(private val db: AtlasDatabase) {
             tags.dropUnused()
             items.insertAll(backup.items)
             notes.insertAll(backup.notes)
+            sheets.insertAll(backup.sheets)
             trackers.insertAll(backup.trackers)
             trackers.insertAllLogs(backup.logs)
             tags.insertAll(backup.tags)
@@ -395,6 +455,8 @@ class AtlasRepository(private val db: AtlasDatabase) {
             timetable.insertSlots(backup.slots)
             timetable.clearTerms()
             timetable.insertTerms(backup.terms)
+            countdowns.clear()
+            countdowns.insertAll(backup.countdowns)
         }
     }
 

@@ -1,5 +1,6 @@
 package com.forsakenblank.atlas.ui.notes
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -9,14 +10,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -25,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -33,18 +38,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.forsakenblank.atlas.data.AtlasRepository
 import com.forsakenblank.atlas.ui.AtlasNavigator
+import com.forsakenblank.atlas.ui.LocalSnackbar
 import com.forsakenblank.atlas.ui.common.ColorPickerDialog
 import com.forsakenblank.atlas.ui.common.atlasViewModel
 import com.forsakenblank.atlas.ui.theme.LocalSettings
@@ -148,6 +157,10 @@ fun NoteEditorScreen(id: Long, navigator: AtlasNavigator) {
     val item by vm.item.collectAsStateWithLifecycle()
     var menuOpen by remember { mutableStateOf(false) }
     var pickingColor by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
     val tags = remember(vm.text) { AtlasRepository.findTags(vm.text) }
     val words = remember(vm.text) { vm.text.split(Regex("\\s+")).count { it.isNotBlank() } }
 
@@ -178,6 +191,28 @@ fun NoteEditorScreen(id: Long, navigator: AtlasNavigator) {
                             onClick = {
                                 menuOpen = false
                                 pickingColor = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Share") },
+                            leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    if (vm.title.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, vm.title)
+                                    putExtra(Intent.EXTRA_TEXT, listOf(vm.title, vm.text).filter { it.isNotBlank() }.joinToString("\n\n"))
+                                }
+                                context.startActivity(Intent.createChooser(send, null))
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Copy text") },
+                            leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                clipboard.setText(AnnotatedString(vm.text))
+                                scope.launch { snackbar.showSnackbar("Copied", duration = SnackbarDuration.Short) }
                             },
                         )
                         DropdownMenuItem(

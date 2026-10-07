@@ -2,6 +2,7 @@
 
 package com.forsakenblank.atlas.ui.track
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,19 +21,27 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AddHome
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,18 +56,35 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.forsakenblank.atlas.data.Aggregate
 import com.forsakenblank.atlas.data.AtlasRepository
+import com.forsakenblank.atlas.data.LongPress
 import com.forsakenblank.atlas.data.TrackerKind
 import com.forsakenblank.atlas.ui.AtlasNavigator
+import com.forsakenblank.atlas.ui.LocalSnackbar
 import com.forsakenblank.atlas.ui.common.ColorRow
 import com.forsakenblank.atlas.ui.common.EmptyState
+import com.forsakenblank.atlas.ui.common.SelectionBar
 import com.forsakenblank.atlas.ui.common.atlasViewModel
+import com.forsakenblank.atlas.ui.common.toggle
+import com.forsakenblank.atlas.ui.settings.ConfirmDialog
 import com.forsakenblank.atlas.ui.theme.LocalSettings
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class TrackViewModel(repo: AtlasRepository) : ViewModel() {
+class TrackViewModel(private val repo: AtlasRepository) : ViewModel() {
     val trackers = todaySummaries(repo).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun trash(ids: Set<Long>) {
+        viewModelScope.launch { repo.moveToTrash(ids) }
+    }
+
+    fun restore(ids: Set<Long>) {
+        viewModelScope.launch { repo.restoreAll(ids) }
+    }
+
+    fun setOnHome(ids: Set<Long>, show: Boolean) {
+        viewModelScope.launch { repo.setOnHome(ids, show) }
+    }
 }
 
 @Composable
@@ -68,6 +94,25 @@ fun TrackScreen(navigator: AtlasNavigator) {
     val settings = LocalSettings.current
     val tap = rememberTrackerTap()
     var creating by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(emptySet<Long>()) }
+    var confirmTrash by remember { mutableStateOf(false) }
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    val selecting = selected.isNotEmpty()
+    val holdToSelect = settings.shortcutLongPress == LongPress.SELECT
+
+    LaunchedEffect(trackers) {
+        val ids = trackers.map { it.id }.toSet()
+        if (!ids.containsAll(selected)) selected = selected intersect ids
+    }
+    BackHandler(enabled = selecting) { selected = emptySet() }
+
+    fun announce(message: String, undo: () -> Unit) {
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            if (snackbar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) undo()
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
@@ -87,7 +132,7 @@ fun TrackScreen(navigator: AtlasNavigator) {
             } else {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Text(
-                        "Tap to log, hold to see stats and history.",
+                        if (holdToSelect) "Tap to log, hold to select. Open one to see its stats and history." else "Tap to log, hold to see stats and history.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -96,18 +141,73 @@ fun TrackScreen(navigator: AtlasNavigator) {
             items(trackers, key = { it.id }) { summary ->
                 TrackerButton(
                     summary = summary,
-                    onTap = { tap(summary) },
-                    onLongPress = { navigator.openTracker(summary.id) },
+                    onTap = { if (selecting) selected = selected.toggle(summary.id) else tap(summary) },
+                    onLongPress = {
+                        when {
+                            selecting -> selected = selected.toggle(summary.id)
+                            holdToSelect -> selected = setOf(summary.id)
+                            else -> navigator.openTracker(summary.id)
+                        }
+                    },
+                    selecting = selecting,
+                    selected = summary.id in selected,
                 )
             }
         }
 
-        ExtendedFloatingActionButton(
-            onClick = { creating = true },
-            icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-            text = { Text("New tracker") },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-        )
+        if (selecting) {
+            val chosen = trackers.filter { it.id in selected }
+            val allOnHome = chosen.all { it.tracker.showOnHome }
+            SelectionBar(
+                count = selected.size,
+                onClear = { selected = emptySet() },
+                onSelectAll = if (selected.size < trackers.size) ({ selected = trackers.map { it.id }.toSet() }) else null,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+            ) {
+                if (selected.size == 1) {
+                    IconButton(onClick = {
+                        val id = selected.first()
+                        selected = emptySet()
+                        navigator.openTracker(id)
+                    }) { Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = "Open tracker") }
+                }
+                IconButton(onClick = {
+                    val ids = selected
+                    vm.setOnHome(ids, !allOnHome)
+                    selected = emptySet()
+                    announce(if (allOnHome) "Taken off Home" else "Added to Home") { vm.setOnHome(ids, allOnHome) }
+                }) {
+                    Icon(
+                        if (allOnHome) Icons.Outlined.VisibilityOff else Icons.Outlined.AddHome,
+                        contentDescription = if (allOnHome) "Take off Home" else "Add to Home",
+                    )
+                }
+                IconButton(onClick = { confirmTrash = true }) { Icon(Icons.Outlined.Delete, contentDescription = "Move to trash") }
+            }
+        } else {
+            ExtendedFloatingActionButton(
+                onClick = { creating = true },
+                icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                text = { Text("New tracker") },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+            )
+        }
+    }
+
+    if (confirmTrash) {
+        val count = selected.size
+        val kept = if (settings.trashDays <= 0) "until you empty the trash" else "for ${settings.trashDays} days"
+        ConfirmDialog(
+            title = if (count == 1) "Move this tracker to the trash?" else "Move $count trackers to the trash?",
+            body = "Their history goes with them. You can restore them $kept.",
+            button = "Move to trash",
+            onDismiss = { confirmTrash = false },
+        ) {
+            val ids = selected
+            selected = emptySet()
+            vm.trash(ids)
+            announce(if (ids.size == 1) "Moved 1 tracker to the trash" else "Moved ${ids.size} trackers to the trash") { vm.restore(ids) }
+        }
     }
 
     if (creating) {

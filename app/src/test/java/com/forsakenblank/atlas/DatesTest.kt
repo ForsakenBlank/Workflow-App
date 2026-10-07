@@ -4,8 +4,10 @@ import com.forsakenblank.atlas.data.AppSettings
 import com.forsakenblank.atlas.data.Event
 import com.forsakenblank.atlas.data.Repeat
 import com.forsakenblank.atlas.data.Subject
+import com.forsakenblank.atlas.data.Task
 import com.forsakenblank.atlas.data.Term
 import com.forsakenblank.atlas.data.TimetableSlot
+import com.forsakenblank.atlas.ui.calendar.CalendarData
 import com.forsakenblank.atlas.util.classesOn
 import com.forsakenblank.atlas.util.next
 import com.forsakenblank.atlas.util.nowAndNext
@@ -133,6 +135,32 @@ class DatesTest {
         val upNext = nowAndNext(weekB, 590)
         assertEquals(2L, upNext.now?.slot?.id)
         assertEquals(1L, upNext.next?.slot?.id)
+    }
+
+    @Test
+    fun yearlyAllDayEventsComeBackEachYear() {
+        val birthday = Event(
+            title = "Birthday",
+            startsAt = today.startMillis(),
+            endsAt = today.plusDays(1).startMillis(),
+            allDay = true,
+            repeatRule = Repeat.YEARLY,
+        )
+        val data = CalendarData(events = listOf(birthday))
+        assertEquals(1, data.eventsOn(today.plusYears(1)).size)
+        assertEquals(today.plusYears(3), data.eventsOn(today.plusYears(3)).single().startsAt.toLocalDate())
+        assertTrue(data.eventsOn(today.plusYears(1).plusDays(1)).isEmpty())
+    }
+
+    @Test
+    fun repeatingTasksPreviewTheirLaterDates() {
+        val task = Task(id = 1, title = "Mum's birthday", due = today.startMillis(), repeatRule = Repeat.YEARLY)
+        val data = CalendarData(tasks = listOf(task))
+        assertEquals(listOf(task), data.tasksOn(today))
+        assertTrue(data.repeatsOn(today).isEmpty())
+        assertEquals(listOf(task), data.repeatsOn(today.plusYears(1)))
+        assertTrue(data.repeatsOn(today.plusDays(1)).isEmpty())
+        assertTrue(CalendarData(tasks = listOf(task.copy(done = true))).repeatsOn(today.plusYears(1)).isEmpty())
     }
 
     @Test

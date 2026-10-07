@@ -22,8 +22,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
@@ -39,7 +41,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -155,6 +160,14 @@ class TasksViewModel(private val repo: AtlasRepository) : ViewModel() {
 
     fun setDone(task: Task, done: Boolean) {
         viewModelScope.launch { repo.setTaskDone(task, done) }
+    }
+
+    fun delete(task: Task) {
+        viewModelScope.launch { repo.deleteTask(task.id) }
+    }
+
+    fun putBack(task: Task) {
+        viewModelScope.launch { repo.saveTask(task) }
     }
 }
 
@@ -275,6 +288,15 @@ fun TasksScreen(navigator: AtlasNavigator) {
         }
     }
 
+    fun delete(task: Task) {
+        vm.delete(task)
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val result = snackbar.showSnackbar("Deleted \"${task.title}\"", actionLabel = "Undo", duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed) vm.putBack(task)
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             QuickAddField(
@@ -323,13 +345,19 @@ fun TasksScreen(navigator: AtlasNavigator) {
                     }
                     if (!isDone || showDone) {
                         items(section.tasks, key = { it.id }) { task ->
-                            TaskRow(
-                                task = task,
-                                subject = task.subjectId?.let { subjectsById[it] },
-                                onToggle = { done -> toggle(task, done) },
-                                onClick = { editing = task },
+                            SwipeableTask(
+                                done = task.done,
+                                onDone = { toggle(task, !task.done) },
+                                onDelete = { delete(task) },
                                 modifier = if (settings.reduceMotion) Modifier else Modifier.animateItem(),
-                            )
+                            ) {
+                                TaskRow(
+                                    task = task,
+                                    subject = task.subjectId?.let { subjectsById[it] },
+                                    onToggle = { done -> toggle(task, done) },
+                                    onClick = { editing = task },
+                                )
+                            }
                         }
                     }
                 }
@@ -427,6 +455,69 @@ private fun GroupHeading(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+// swipe right to tick off, swipe left to delete (with undo)
+@Composable
+private fun SwipeableTask(
+    done: Boolean,
+    onDone: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val state = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    onDone()
+                    false
+                }
+                SwipeToDismissBoxValue.EndToStart -> {
+                    onDelete()
+                    true
+                }
+                SwipeToDismissBoxValue.Settled -> false
+            }
+        },
+    )
+    SwipeToDismissBox(
+        state = state,
+        modifier = modifier,
+        backgroundContent = {
+            val direction = state.dismissDirection
+            val deleting = direction == SwipeToDismissBoxValue.EndToStart
+            val colors = MaterialTheme.colorScheme
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        when (direction) {
+                            SwipeToDismissBoxValue.StartToEnd -> colors.primaryContainer
+                            SwipeToDismissBoxValue.EndToStart -> colors.errorContainer
+                            SwipeToDismissBoxValue.Settled -> Color.Transparent
+                        },
+                    )
+                    .padding(horizontal = 24.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (deleting) Arrangement.End else Arrangement.Start,
+            ) {
+                if (direction != SwipeToDismissBoxValue.Settled) {
+                    Icon(
+                        when {
+                            deleting -> Icons.Outlined.Delete
+                            done -> Icons.AutoMirrored.Outlined.Undo
+                            else -> Icons.Outlined.CheckCircle
+                        },
+                        contentDescription = null,
+                        tint = if (deleting) colors.onErrorContainer else colors.onPrimaryContainer,
+                    )
+                }
+            }
+        },
+    ) {
+        Box(Modifier.background(MaterialTheme.colorScheme.background)) { content() }
     }
 }
 

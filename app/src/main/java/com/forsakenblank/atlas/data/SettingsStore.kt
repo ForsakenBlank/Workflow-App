@@ -31,6 +31,8 @@ enum class BarLabels(val label: String) { ALWAYS("Always"), SELECTED("Selected t
 
 enum class ShortcutSize(val label: String, val minWidth: Int) { SMALL("Small", 110), NORMAL("Normal", 156), LARGE("Large", 220) }
 
+enum class LongPress(val label: String) { SELECT("Start selecting"), OPEN("Open the tracker") }
+
 enum class NoteSort(val label: String) { EDITED("Last edited"), CREATED("Date created"), TITLE("Title"), COLOUR("Colour") }
 
 enum class NoteLayout(val label: String) { LIST("List"), GRID("Grid"), COMPACT("Compact") }
@@ -92,8 +94,10 @@ data class AppSettings(
     val showAgenda: Boolean = true,
     val showSectionsRow: Boolean = true,
     val showPinnedNotes: Boolean = true,
+    val showCountdowns: Boolean = true,
     val shortcutColumns: Int = 0, // 0 fits as many as the screen allows
     val shortcutSize: ShortcutSize = ShortcutSize.NORMAL,
+    val shortcutLongPress: LongPress = LongPress.SELECT,
 
     // notes
     val noteSort: NoteSort = NoteSort.EDITED,
@@ -132,6 +136,16 @@ data class AppSettings(
     val showCompletedTasks: Boolean = true,
     val taskSort: TaskSort = TaskSort.DUE,
     val tasksOnHome: Boolean = true,
+
+    // reminders
+    val remindersOn: Boolean = true,
+    val reminderMinute: Int = 480, // minute of the day for birthdays, tasks and all day events
+    val eventReminderMinutes: Int = 15, // -1 means no reminder unless the event asks for one
+    val countdownDaysBefore: Int = 1, // 0 only reminds on the day
+    val remindTasks: Boolean = true,
+    val remindEvents: Boolean = true,
+    val remindCountdowns: Boolean = true,
+    val askedNotifications: Boolean = false,
 
     // focus
     val focusMinutes: Int = 25,

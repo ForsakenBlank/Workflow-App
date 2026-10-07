@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
@@ -107,6 +108,8 @@ class ExplorerViewModel(private val repo: AtlasRepository) : ViewModel() {
 
     suspend fun createNote(): Long = repo.createNote(folderId.value)
 
+    suspend fun createSheet(name: String): Long = repo.createSheet(folderId.value, name)
+
     fun rename(item: Item, name: String) {
         viewModelScope.launch { repo.rename(item, name) }
     }
@@ -138,6 +141,7 @@ private fun sortItems(items: List<Item>, sort: ExplorerSort, foldersFirst: Boole
 private sealed interface ExplorerDialog {
     data object NewFolder : ExplorerDialog
     data object NewTracker : ExplorerDialog
+    data object NewSheet : ExplorerDialog
     data class Rename(val item: Item) : ExplorerDialog
     data class Colour(val item: Item) : ExplorerDialog
     data class Move(val item: Item) : ExplorerDialog
@@ -171,7 +175,7 @@ fun ExplorerScreen(navigator: AtlasNavigator) {
                     EmptyState(
                         icon = Icons.Outlined.FolderOpen,
                         title = "This folder is empty",
-                        body = "Use the + button to add a folder, note or tracker here.",
+                        body = "Use the + button to add a folder, note, tracker or sheet here.",
                     )
                 }
             }
@@ -184,6 +188,7 @@ fun ExplorerScreen(navigator: AtlasNavigator) {
                             ItemType.FOLDER -> vm.open(item.id)
                             ItemType.NOTE -> navigator.openNote(item.id)
                             ItemType.TRACKER -> navigator.openTracker(item.id)
+                            ItemType.SHEET -> navigator.openSheet(item.id)
                         }
                     },
                     onRename = { dialog = ExplorerDialog.Rename(item) },
@@ -236,6 +241,14 @@ fun ExplorerScreen(navigator: AtlasNavigator) {
                         dialog = ExplorerDialog.NewTracker
                     },
                 )
+                DropdownMenuItem(
+                    text = { Text("Sheet") },
+                    leadingIcon = { Icon(Icons.Outlined.TableChart, contentDescription = null) },
+                    onClick = {
+                        addMenu = false
+                        dialog = ExplorerDialog.NewSheet
+                    },
+                )
             }
         }
     }
@@ -255,6 +268,15 @@ fun ExplorerScreen(navigator: AtlasNavigator) {
             parentId = folderId,
             onDismiss = { dialog = null },
             onCreated = { dialog = null },
+        )
+        ExplorerDialog.NewSheet -> TextInputDialog(
+            title = "New sheet",
+            confirm = "Create",
+            onDismiss = { dialog = null },
+            onConfirm = { name ->
+                dialog = null
+                scope.launch { navigator.openSheet(vm.createSheet(name)) }
+            },
         )
         is ExplorerDialog.Rename -> TextInputDialog(
             title = "Rename",
@@ -331,6 +353,7 @@ private fun ExplorerRow(
         ItemType.FOLDER -> "Folder"
         ItemType.NOTE -> "Note"
         ItemType.TRACKER -> "Tracker"
+        ItemType.SHEET -> "Sheet"
     }
     Box {
         if (tile) {

@@ -26,11 +26,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Cake
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.School
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -59,6 +63,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.forsakenblank.atlas.data.AppSettings
 import com.forsakenblank.atlas.data.CalendarView
+import com.forsakenblank.atlas.data.Countdown
+import com.forsakenblank.atlas.data.CountdownKind
 import com.forsakenblank.atlas.data.Event
 import com.forsakenblank.atlas.data.Repeat
 import com.forsakenblank.atlas.data.Section
@@ -74,6 +80,8 @@ import com.forsakenblank.atlas.util.ClassSlot
 import com.forsakenblank.atlas.util.classesOn
 import com.forsakenblank.atlas.util.formatMinuteOfDay
 import com.forsakenblank.atlas.util.formatTime
+import com.forsakenblank.atlas.util.label
+import com.forsakenblank.atlas.util.milestone
 import com.forsakenblank.atlas.util.startMillis
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -107,6 +115,7 @@ fun CalendarScreen(navigator: AtlasNavigator) {
     var selectedDay by rememberSaveable { mutableStateOf(today.toEpochDay()) }
     var shownMonth by rememberSaveable { mutableStateOf(YearMonth.from(today).toString()) }
     var dialog by remember { mutableStateOf<CalendarDialog?>(null) }
+    var addMenu by remember { mutableStateOf(false) }
 
     val selected = LocalDate.ofEpochDay(selectedDay)
     val month = YearMonth.parse(shownMonth)
@@ -204,11 +213,36 @@ fun CalendarScreen(navigator: AtlasNavigator) {
             }
         }
 
-        FloatingActionButton(
-            onClick = { navigator.openEvent(null, selected.toEpochDay()) },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-        ) {
-            Icon(Icons.Outlined.Add, contentDescription = "New event")
+        Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) {
+            FloatingActionButton(onClick = { addMenu = true }) {
+                Icon(Icons.Outlined.Add, contentDescription = "Add")
+            }
+            DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Event") },
+                    leadingIcon = { Icon(Icons.Outlined.Event, contentDescription = null) },
+                    onClick = {
+                        addMenu = false
+                        navigator.openEvent(null, selected.toEpochDay())
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Task") },
+                    leadingIcon = { Icon(Icons.Outlined.Checklist, contentDescription = null) },
+                    onClick = {
+                        addMenu = false
+                        dialog = CalendarDialog.EditTask(null, selected)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Birthday") },
+                    leadingIcon = { Icon(Icons.Outlined.Cake, contentDescription = null) },
+                    onClick = {
+                        addMenu = false
+                        navigator.openCountdown(null, CountdownKind.BIRTHDAY, day = selected.toEpochDay())
+                    },
+                )
+            }
         }
     }
 
@@ -223,8 +257,8 @@ fun CalendarScreen(navigator: AtlasNavigator) {
 }
 
 private fun hasAnything(day: LocalDate, data: CalendarData, settings: AppSettings): Boolean =
-    data.eventsOn(day).isNotEmpty() ||
-        (settings.showTasksOnCalendar && data.tasksOn(day).isNotEmpty())
+    data.eventsOn(day).isNotEmpty() || data.countdownsOn(day).isNotEmpty() ||
+        (settings.showTasksOnCalendar && (data.tasksOn(day).isNotEmpty() || data.repeatsOn(day).isNotEmpty()))
 
 @Composable
 private fun MonthGrid(
@@ -294,9 +328,10 @@ private fun DayCell(
 ) {
     val colors = MaterialTheme.colorScheme
     val events = data.eventsOn(day)
-    val tasks = if (settings.showTasksOnCalendar) data.tasksOn(day).filter { !it.done } else emptyList()
+    val tasks = if (settings.showTasksOnCalendar) data.tasksOn(day).filter { !it.done } + data.repeatsOn(day) else emptyList()
     val logged = settings.showTrackerDots && data.logsOn(day).isNotEmpty()
-    val dots = events.take(3).map { it.color.toItemColor(colors.primary) } +
+    val dots = data.countdownsOn(day).take(2).map { it.color.toItemColor(colors.tertiary) } +
+        events.take(3).map { it.color.toItemColor(colors.primary) } +
         (if (tasks.isNotEmpty()) listOf(colors.secondary) else emptyList()) +
         (if (logged) listOf(colors.tertiary) else emptyList())
 
@@ -346,10 +381,12 @@ private fun LazyListScope.dayContents(
     onDialog: (CalendarDialog) -> Unit,
 ) {
     val events = data.eventsOn(day)
+    val countdowns = data.countdownsOn(day)
     val classes = if (settings.showClassesOnCalendar) classesOn(day, data.slots, data.subjects, data.terms, settings) else emptyList()
     val tasks = if (settings.showTasksOnCalendar) data.tasksOn(day) else emptyList()
+    val repeats = if (settings.showTasksOnCalendar) data.repeatsOn(day) else emptyList()
     val logs = if (settings.showTrackerDots) data.logsOn(day) else emptyList()
-    val empty = events.isEmpty() && classes.isEmpty() && tasks.isEmpty() && logs.isEmpty()
+    val empty = events.isEmpty() && countdowns.isEmpty() && classes.isEmpty() && tasks.isEmpty() && repeats.isEmpty() && logs.isEmpty()
 
     if (header) {
         item(key = "header-$day") {
@@ -372,11 +409,15 @@ private fun LazyListScope.dayContents(
                     modifier = Modifier.weight(1f),
                 )
                 if (!compact) {
-                    TextButton(onClick = { onDialog(CalendarDialog.EditTask(null, day)) }) { Text("Add a task") }
+                    TextButton(onClick = { navigator.openEvent(null, day.toEpochDay()) }) { Text("Add event") }
+                    TextButton(onClick = { onDialog(CalendarDialog.EditTask(null, day)) }) { Text("Add task") }
                 }
             }
         }
         return
+    }
+    items(countdowns, key = { "countdown-$day-${it.id}" }) { countdown ->
+        CountdownRow(countdown, day) { navigator.openCountdown(countdown.id) }
     }
     items(events, key = { "event-$day-${it.id}" }) { event ->
         EventRow(event, settings) { navigator.openEvent(event.id, day.toEpochDay()) }
@@ -391,6 +432,9 @@ private fun LazyListScope.dayContents(
             onToggle = { vm.setTaskDone(task, it) },
             onClick = { onDialog(CalendarDialog.EditTask(task, day)) },
         )
+    }
+    items(repeats, key = { "repeat-$day-${it.id}" }) { task ->
+        RepeatPreviewRow(task) { onDialog(CalendarDialog.EditTask(task, day)) }
     }
     if (logs.isNotEmpty()) {
         item(key = "logs-$day") {
@@ -436,6 +480,55 @@ private fun EventRow(event: Event, settings: AppSettings, onClick: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CountdownRow(countdown: Countdown, day: LocalDate, onClick: () -> Unit) {
+    val accent = countdown.color.toItemColor(MaterialTheme.colorScheme.tertiary)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val emoji = countdown.emoji?.takeIf { it.isNotBlank() }
+        if (emoji != null) {
+            Text(emoji, style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(20.dp), textAlign = TextAlign.Center)
+        } else {
+            Icon(Icons.Outlined.Cake, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
+        }
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text(countdown.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // the milestone is worked out from the day being looked at, so next year's birthday says the right age
+            val detail = countdown.milestone(day) ?: countdown.kind.name.lowercase().replaceFirstChar { it.uppercase() }
+            Text(detail.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+// a later date of a repeating task, it turns into a real task once the current one is ticked off
+@Composable
+private fun RepeatPreviewRow(task: Task, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Repeat, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text(task.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "Repeating task, ${task.repeatRule.label().lowercase()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

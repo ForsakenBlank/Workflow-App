@@ -1,15 +1,19 @@
 package com.forsakenblank.atlas
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,6 +47,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
             LaunchedEffect(current.appIcon) { applyAppIcon(this@MainActivity, current.appIcon) }
+
+            // android 13 and up needs a yes before reminders can show, asked once after the welcome screen
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                // the answer needs no handling here, each reminder checks it before it shows
+                val askForNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+                LaunchedEffect(current.onboarded, current.remindersOn, current.askedNotifications) {
+                    if (current.onboarded && current.remindersOn && !current.askedNotifications) {
+                        // saved before asking, so turning the phone while the prompt is up does not ask twice
+                        app.updateSettings { s -> s.copy(askedNotifications = true) }
+                        askForNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
 
             AtlasTheme(current) {
                 if (current.onboarded) AtlasRoot() else WelcomeScreen(onDone = {})

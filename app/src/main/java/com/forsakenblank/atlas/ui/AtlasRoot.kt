@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Cake
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Checklist
@@ -27,8 +28,10 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.Cake
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Checklist
@@ -37,7 +40,9 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -80,13 +85,18 @@ import com.forsakenblank.atlas.data.Transition
 import com.forsakenblank.atlas.ui.calendar.CalendarScreen
 import com.forsakenblank.atlas.ui.calendar.EventEditorScreen
 import com.forsakenblank.atlas.ui.common.atlasApp
+import com.forsakenblank.atlas.ui.countdowns.CountdownEditorScreen
+import com.forsakenblank.atlas.ui.countdowns.CountdownsScreen
 import com.forsakenblank.atlas.ui.explorer.ExplorerScreen
 import com.forsakenblank.atlas.ui.explorer.TrashScreen
 import com.forsakenblank.atlas.ui.focus.FocusScreen
 import com.forsakenblank.atlas.ui.home.HomeScreen
 import com.forsakenblank.atlas.ui.notes.NoteEditorScreen
 import com.forsakenblank.atlas.ui.notes.NotesScreen
+import com.forsakenblank.atlas.ui.sheets.SheetEditorScreen
+import com.forsakenblank.atlas.ui.sheets.SheetsScreen
 import com.forsakenblank.atlas.ui.onboarding.StarterPacksScreen
+import com.forsakenblank.atlas.ui.search.SearchScreen
 import com.forsakenblank.atlas.ui.settings.SettingsCategoryScreen
 import com.forsakenblank.atlas.ui.settings.SettingsScreen
 import com.forsakenblank.atlas.ui.settings.ThemeEditorScreen
@@ -104,9 +114,11 @@ import com.forsakenblank.atlas.ui.track.TrackerDetailScreen
 fun sectionIcon(section: Section, selected: Boolean): ImageVector = when (section) {
     Section.HOME -> if (selected) Icons.Filled.Home else Icons.Outlined.Home
     Section.NOTES -> if (selected) Icons.Filled.EditNote else Icons.Outlined.EditNote
+    Section.SHEETS -> if (selected) Icons.Filled.TableChart else Icons.Outlined.TableChart
     Section.CALENDAR -> if (selected) Icons.Filled.CalendarMonth else Icons.Outlined.CalendarMonth
     Section.TIMETABLE -> if (selected) Icons.Filled.School else Icons.Outlined.School
     Section.TASKS -> if (selected) Icons.Filled.Checklist else Icons.Outlined.Checklist
+    Section.COUNTDOWNS -> if (selected) Icons.Filled.Cake else Icons.Outlined.Cake
     Section.TRACK -> if (selected) Icons.Filled.Insights else Icons.Outlined.Insights
     Section.FOCUS -> if (selected) Icons.Filled.Timer else Icons.Outlined.Timer
     Section.TOOLS -> if (selected) Icons.Filled.Calculate else Icons.Outlined.Calculate
@@ -230,6 +242,9 @@ fun AtlasRoot() {
                                     }
                                 }
                             }
+                            IconButton(onClick = navigator::openSearch) {
+                                Icon(Icons.Outlined.Search, contentDescription = "Search")
+                            }
                             IconButton(onClick = navigator::openSettings) {
                                 Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                             }
@@ -259,9 +274,11 @@ fun AtlasRoot() {
             ) {
                 composable(Section.HOME.route) { HomeScreen(navigator) }
                 composable(Section.NOTES.route) { NotesScreen(navigator) }
+                composable(Section.SHEETS.route) { SheetsScreen(navigator) }
                 composable(Section.CALENDAR.route) { CalendarScreen(navigator) }
                 composable(Section.TIMETABLE.route) { TimetableScreen(navigator) }
                 composable(Section.TASKS.route) { TasksScreen(navigator) }
+                composable(Section.COUNTDOWNS.route) { CountdownsScreen(navigator) }
                 composable(Section.TRACK.route) { TrackScreen(navigator) }
                 composable(Section.FOCUS.route) { FocusScreen(navigator) }
                 composable(Section.TOOLS.route) { ToolsScreen(navigator) }
@@ -269,6 +286,9 @@ fun AtlasRoot() {
 
                 composable(Routes.NOTE, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
                     NoteEditorScreen(entry.arguments!!.getLong("id"), navigator)
+                }
+                composable(Routes.SHEET, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
+                    SheetEditorScreen(entry.arguments!!.getLong("id"), navigator)
                 }
                 composable(Routes.TRACKER, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
                     TrackerDetailScreen(entry.arguments!!.getLong("id"), navigator)
@@ -282,6 +302,7 @@ fun AtlasRoot() {
                     ThemeEditorScreen(entry.arguments?.getString("id") ?: "new", navigator)
                 }
                 composable(Routes.TRASH) { TrashScreen(navigator) }
+                composable(Routes.SEARCH) { SearchScreen(navigator) }
                 composable(
                     Routes.EVENT,
                     arguments = listOf(
@@ -299,6 +320,33 @@ fun AtlasRoot() {
                 composable(Routes.STARTER_PACKS) { StarterPacksScreen(navigator) }
                 composable(Routes.TOOL, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
                     ToolScreen(entry.arguments?.getString("id").orEmpty(), navigator)
+                }
+                composable(
+                    Routes.COUNTDOWN,
+                    arguments = listOf(
+                        navArgument("id") { type = NavType.LongType },
+                        navArgument("kind") {
+                            type = NavType.StringType
+                            defaultValue = "EVENT"
+                        },
+                        navArgument("countUp") {
+                            type = NavType.BoolType
+                            defaultValue = false
+                        },
+                        navArgument("day") {
+                            type = NavType.LongType
+                            defaultValue = 0L
+                        },
+                    ),
+                ) { entry ->
+                    val args = entry.arguments!!
+                    CountdownEditorScreen(
+                        id = args.getLong("id"),
+                        kind = args.getString("kind").orEmpty(),
+                        countUp = args.getBoolean("countUp"),
+                        day = args.getLong("day"),
+                        navigator = navigator,
+                    )
                 }
             }
         }

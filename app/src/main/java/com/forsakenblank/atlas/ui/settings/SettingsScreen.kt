@@ -48,11 +48,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.forsakenblank.atlas.BuildConfig
 import com.forsakenblank.atlas.data.AppSettings
 import com.forsakenblank.atlas.data.TrackerKind
+import com.forsakenblank.atlas.notify.openNotificationSettings
 import com.forsakenblank.atlas.ui.AtlasNavigator
 import com.forsakenblank.atlas.ui.LocalSnackbar
 import com.forsakenblank.atlas.ui.common.atlasApp
@@ -151,6 +153,9 @@ fun SettingsCategoryScreen(categoryName: String, navigator: AtlasNavigator) {
             if (category == SettingsCategory.APPEARANCE) {
                 item { ThemeStrip(navigator) }
             }
+            if (category == SettingsCategory.REMINDERS) {
+                item { NotificationsBlockedRow(onOpenSettings = { onAction(SettingsAction.NOTIFICATION_SETTINGS) }) }
+            }
             items(entries, key = { it.title }) { setting ->
                 SettingRow(setting, settings, app::updateSettings, onAction, showCategory = false)
             }
@@ -173,17 +178,15 @@ private fun AboutBlock() {
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text("New in this version", style = MaterialTheme.typography.titleMedium)
         listOf(
-            "Theme creator with a full colour picker, plus 17 built in themes",
-            "Over 90 settings with search",
-            "Page and tab transitions with speed control",
-            "Calendar with events, repeats, tasks and tracker logs",
-            "Timetable with subjects, week A and B and terms",
-            "Tasks with due dates, priorities and repeats",
-            "Focus timer that can log to a tracker",
-            "Tools: dice, coins, odds, percentages, tips, units and dates",
-            "Number and rating trackers",
-            "Starter packs instead of built in shortcuts",
-            "New pen app icon in five colours",
+            "Sheets: spreadsheets with formulas like =SUM(A1:A5)",
+            "Countdowns for birthdays, anniversaries and big dates, shown on Home",
+            "Reminders for birthdays, tasks due today and upcoming events",
+            "Search everything from the top bar",
+            "Hold to select shortcuts, trackers and notes, then remove them in one go",
+            "Swipe a task right to tick it off or left to delete it",
+            "Repeating tasks and yearly events show on every date they repeat",
+            "Add events or tasks straight from any day in the calendar",
+            "Share or copy a note",
         ).forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
     }
 }
@@ -271,7 +274,7 @@ private fun ChoiceRow(
         headlineContent = { Text(setting.title) },
         supportingContent = {
             Column {
-                Text(setting.label(current), color = MaterialTheme.colorScheme.primary)
+                Text(setting.labelWith(settings, current), color = MaterialTheme.colorScheme.primary)
                 if (setting.summary.isNotBlank()) Text(setting.summary)
             }
         },
@@ -295,7 +298,7 @@ private fun ChoiceRow(
                                 .padding(vertical = 4.dp),
                         ) {
                             RadioButton(selected = option == current, onClick = null)
-                            Text(setting.label(option), modifier = Modifier.padding(start = 12.dp))
+                            Text(setting.labelWith(settings, option), modifier = Modifier.padding(start = 12.dp))
                         }
                     }
                 }
@@ -344,6 +347,8 @@ fun rememberSettingsActions(navigator: AtlasNavigator): (SettingsAction) -> Unit
     val app = atlasApp()
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val testReminder = rememberTestReminder()
     var dialog by remember { mutableStateOf<SettingsAction?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -416,6 +421,8 @@ fun rememberSettingsActions(navigator: AtlasNavigator): (SettingsAction) -> Unit
             SettingsAction.STARTER_PACKS -> navigator.openStarterPacks()
             SettingsAction.SUBJECTS -> navigator.openSubjects()
             SettingsAction.TERMS -> navigator.openTerms()
+            SettingsAction.NOTIFICATION_SETTINGS -> openNotificationSettings(context)
+            SettingsAction.TEST_REMINDER -> testReminder()
             else -> dialog = action
         }
     }

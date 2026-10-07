@@ -1,6 +1,8 @@
 package com.forsakenblank.atlas.ui.notes
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,17 +29,26 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,9 +64,13 @@ import com.forsakenblank.atlas.data.NoteRow
 import com.forsakenblank.atlas.data.NoteSort
 import com.forsakenblank.atlas.data.Tag
 import com.forsakenblank.atlas.ui.AtlasNavigator
+import com.forsakenblank.atlas.ui.LocalSnackbar
 import com.forsakenblank.atlas.ui.common.AtlasCard
 import com.forsakenblank.atlas.ui.common.EmptyState
+import com.forsakenblank.atlas.ui.common.SelectionBar
 import com.forsakenblank.atlas.ui.common.atlasViewModel
+import com.forsakenblank.atlas.ui.common.toggle
+import com.forsakenblank.atlas.ui.settings.ConfirmDialog
 import com.forsakenblank.atlas.ui.theme.LocalSettings
 import com.forsakenblank.atlas.util.formatDay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -87,6 +102,18 @@ class NotesViewModel(private val repo: AtlasRepository) : ViewModel() {
     }
 
     suspend fun newNote(): Long = repo.createNote(parentId = null)
+
+    fun trash(ids: Set<Long>) {
+        viewModelScope.launch { repo.moveToTrash(ids) }
+    }
+
+    fun restore(ids: Set<Long>) {
+        viewModelScope.launch { repo.restoreAll(ids) }
+    }
+
+    fun setPinned(notes: List<NoteRow>, pinned: Boolean) {
+        viewModelScope.launch { notes.forEach { repo.setPinned(it.item, pinned) } }
+    }
 }
 
 private fun sortNotes(notes: List<NoteRow>, sort: NoteSort, pinnedFirst: Boolean): List<NoteRow> {
@@ -111,6 +138,16 @@ fun NotesScreen(navigator: AtlasNavigator) {
     val scope = rememberCoroutineScope()
     val sorted = remember(notes, settings.noteSort, settings.pinnedFirst) { sortNotes(notes, settings.noteSort, settings.pinnedFirst) }
     val grid = settings.noteLayout == NoteLayout.GRID
+    var selected by remember { mutableStateOf(emptySet<Long>()) }
+    var confirmTrash by remember { mutableStateOf(false) }
+    val snackbar = LocalSnackbar.current
+    val selecting = selected.isNotEmpty()
+
+    LaunchedEffect(sorted) {
+        val ids = sorted.map { it.item.id }.toSet()
+        if (!ids.containsAll(selected)) selected = selected intersect ids
+    }
+    BackHandler(enabled = selecting) { selected = emptySet() }
 
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
@@ -158,22 +195,74 @@ fun NotesScreen(navigator: AtlasNavigator) {
                     previewLines = if (settings.noteLayout == NoteLayout.COMPACT) 0 else settings.notePreviewLines,
                     showDate = settings.showNoteDates,
                     compact = settings.noteLayout == NoteLayout.COMPACT,
-                ) { navigator.openNote(note.item.id) }
+                    selected = note.item.id in selected,
+                    onLongClick = { selected = selected.toggle(note.item.id) },
+                ) {
+                    if (selecting) selected = selected.toggle(note.item.id) else navigator.openNote(note.item.id)
+                }
             }
         }
 
-        ExtendedFloatingActionButton(
-            onClick = { scope.launch { navigator.openNote(vm.newNote()) } },
-            icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-            text = { Text("New note") },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-        )
+        if (selecting) {
+            val chosen = sorted.filter { it.item.id in selected }
+            val allPinned = chosen.all { it.item.pinned }
+            SelectionBar(
+                count = selected.size,
+                onClear = { selected = emptySet() },
+                onSelectAll = if (selected.size < sorted.size) ({ selected = sorted.map { it.item.id }.toSet() }) else null,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+            ) {
+                IconButton(onClick = {
+                    vm.setPinned(chosen, !allPinned)
+                    selected = emptySet()
+                }) {
+                    Icon(if (allPinned) Icons.Outlined.PushPin else Icons.Filled.PushPin, contentDescription = if (allPinned) "Unpin" else "Pin")
+                }
+                IconButton(onClick = { confirmTrash = true }) { Icon(Icons.Outlined.Delete, contentDescription = "Move to trash") }
+            }
+        } else {
+            ExtendedFloatingActionButton(
+                onClick = { scope.launch { navigator.openNote(vm.newNote()) } },
+                icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                text = { Text("New note") },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+            )
+        }
+    }
+
+    if (confirmTrash) {
+        val count = selected.size
+        val kept = if (settings.trashDays <= 0) "until you empty the trash" else "for ${settings.trashDays} days"
+        ConfirmDialog(
+            title = if (count == 1) "Move this note to the trash?" else "Move $count notes to the trash?",
+            body = "You can restore ${if (count == 1) "it" else "them"} from the trash $kept.",
+            button = "Move to trash",
+            onDismiss = { confirmTrash = false },
+        ) {
+            val ids = selected
+            selected = emptySet()
+            vm.trash(ids)
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                val message = if (ids.size == 1) "Moved 1 note to the trash" else "Moved ${ids.size} notes to the trash"
+                if (snackbar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) vm.restore(ids)
+            }
+        }
     }
 }
 
 @Composable
-fun NoteCard(note: NoteRow, previewLines: Int = 2, showDate: Boolean = true, compact: Boolean = false, onClick: () -> Unit) {
-    AtlasCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+fun NoteCard(
+    note: NoteRow,
+    previewLines: Int = 2,
+    showDate: Boolean = true,
+    compact: Boolean = false,
+    selected: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    val outline = if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CardDefaults.shape) else Modifier
+    AtlasCard(modifier = Modifier.fillMaxWidth().then(outline), onClick = onClick, onLongClick = onLongClick) {
         Row(Modifier.height(IntrinsicSize.Min)) {
             // colour stripe down the side of the card
             note.item.color?.let { c ->

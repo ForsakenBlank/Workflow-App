@@ -33,14 +33,21 @@ class Converters {
 
     @TypeConverter
     fun stringToRepeat(value: String): Repeat = runCatching { Repeat.valueOf(value) }.getOrDefault(Repeat.NONE)
+
+    @TypeConverter
+    fun countdownKindToString(kind: CountdownKind): String = kind.name
+
+    @TypeConverter
+    fun stringToCountdownKind(value: String): CountdownKind = runCatching { CountdownKind.valueOf(value) }.getOrDefault(CountdownKind.OTHER)
 }
 
 @Database(
     entities = [
         Item::class, NoteBody::class, Tracker::class, LogEntry::class, Tag::class, ItemTag::class,
         Event::class, Task::class, Subject::class, TimetableSlot::class, Term::class,
+        SheetBody::class, Countdown::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -52,6 +59,8 @@ abstract class AtlasDatabase : RoomDatabase() {
     abstract fun events(): EventDao
     abstract fun tasks(): TaskDao
     abstract fun timetable(): TimetableDao
+    abstract fun sheets(): SheetDao
+    abstract fun countdowns(): CountdownDao
 
     companion object {
         fun build(context: Context): AtlasDatabase =
@@ -97,7 +106,25 @@ abstract class AtlasDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
+        // version 3 adds sheets, countdowns and reminder settings on events and tasks
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `sheets` (`itemId` INTEGER NOT NULL, `json` TEXT NOT NULL, PRIMARY KEY(`itemId`), " +
+                        "FOREIGN KEY(`itemId`) REFERENCES `items`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `countdowns` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`title` TEXT NOT NULL, `date` INTEGER NOT NULL, `kind` TEXT NOT NULL, `yearly` INTEGER NOT NULL, " +
+                        "`yearKnown` INTEGER NOT NULL, `countUp` INTEGER NOT NULL, `color` INTEGER, `emoji` TEXT, `note` TEXT, " +
+                        "`pinned` INTEGER NOT NULL, `showOnCalendar` INTEGER NOT NULL, `remind` INTEGER NOT NULL, `created` INTEGER NOT NULL)"
+                )
+                db.execSQL("ALTER TABLE `events` ADD COLUMN `reminderMinutes` INTEGER")
+                db.execSQL("ALTER TABLE `tasks` ADD COLUMN `remind` INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
     }
 }
 

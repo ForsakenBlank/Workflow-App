@@ -38,6 +38,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -48,6 +49,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -61,6 +63,7 @@ import com.forsakenblank.atlas.ui.LocalSnackbar
 import com.forsakenblank.atlas.ui.common.atlasApp
 import com.forsakenblank.atlas.ui.common.toItemColor
 import com.forsakenblank.atlas.ui.theme.LocalSettings
+import com.forsakenblank.atlas.util.formatMinuteOfDay
 import com.forsakenblank.atlas.util.label
 import com.forsakenblank.atlas.util.startMillis
 import com.forsakenblank.atlas.util.toLocalDate
@@ -103,6 +106,7 @@ fun TaskEditorDialog(
     var priority by remember(task?.id) { mutableIntStateOf(task?.priority?.coerceIn(0, 3) ?: 0) }
     var repeat by remember(task?.id) { mutableStateOf(task?.repeatRule ?: Repeat.NONE) }
     var subjectId by remember(task?.id) { mutableStateOf(if (task != null) task.subjectId else initialSubjectId) }
+    var remind by remember(task?.id) { mutableStateOf(task?.remind ?: true) }
     var picking by remember { mutableStateOf(false) }
 
     // saving runs on the app scope so closing the dialog straight away cannot cut it short
@@ -114,6 +118,7 @@ fun TaskEditorDialog(
             priority = priority,
             repeatRule = if (due == null) Repeat.NONE else repeat,
             subjectId = subjectId,
+            remind = remind,
         )
         app.appScope.launch { app.repository.saveTask(saved) }
         onDismiss()
@@ -194,6 +199,21 @@ fun TaskEditorDialog(
                         leadingIcon = { Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     )
                 }
+                if (due != null) {
+                    val remindersOff = !settings.remindersOn || !settings.remindTasks
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Remind me", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                            Text(
+                                if (remindersOff) "Task reminders are off in Settings"
+                                else "On the morning it is due, at ${formatMinuteOfDay(settings.reminderMinute, settings.use24Hour)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = remind, onCheckedChange = { remind = it })
+                    }
+                }
 
                 FieldLabel("Priority")
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -218,6 +238,12 @@ fun TaskEditorDialog(
                 )
                 if (due == null) {
                     Text("Set a due date to make it repeat.", style = MaterialTheme.typography.bodySmall)
+                } else if (repeat != Repeat.NONE) {
+                    Text(
+                        "The next one is added when you tick this one off. For birthdays, a countdown or an event works better.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
 
                 if (subjects.isNotEmpty()) {

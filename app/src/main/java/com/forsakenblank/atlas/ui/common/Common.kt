@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.Colorize
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -78,6 +79,7 @@ fun ItemType.icon(): ImageVector = when (this) {
     ItemType.FOLDER -> Icons.Outlined.Folder
     ItemType.NOTE -> Icons.Outlined.Description
     ItemType.TRACKER -> Icons.Outlined.Insights
+    ItemType.SHEET -> Icons.Outlined.TableChart
 }
 
 fun Int?.toItemColor(fallback: Color): Color = if (this == null) fallback else Color(this)

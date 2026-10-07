@@ -1,5 +1,6 @@
 package com.forsakenblank.atlas.ui.track
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,8 @@ fun TrackerButton(
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
+    selecting: Boolean = false,
+    selected: Boolean = false,
 ) {
     val buzz = rememberHaptic()
     val showStreak = LocalSettings.current.showStreaksOnCards && summary.streak > 0
@@ -66,12 +69,16 @@ fun TrackerButton(
     Card(
         modifier = modifier.combinedClickable(
             onClick = {
-                buzz()
+                if (!selecting) buzz()
                 onTap()
             },
-            onLongClick = onLongPress,
+            onLongClick = {
+                buzz()
+                onLongPress()
+            },
         ),
         colors = CardDefaults.cardColors(containerColor = container),
+        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -85,7 +92,14 @@ fun TrackerButton(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                if (showStreak) {
+                if (selecting) {
+                    Icon(
+                        if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                        contentDescription = if (selected) "Selected" else "Not selected",
+                        tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.size(20.dp),
+                    )
+                } else if (showStreak) {
                     Icon(
                         Icons.Outlined.LocalFireDepartment,
                         contentDescription = "Streak",

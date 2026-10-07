@@ -1,12 +1,13 @@
 package com.forsakenblank.atlas.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
 
-enum class ItemType { FOLDER, NOTE, TRACKER }
+enum class ItemType { FOLDER, NOTE, TRACKER, SHEET }
 
 enum class TrackerKind { COUNTER, YES_NO, TIMER, NUMBER, RATING }
 
@@ -14,6 +15,8 @@ enum class TrackerKind { COUNTER, YES_NO, TIMER, NUMBER, RATING }
 enum class Aggregate { SUM, AVERAGE, LAST }
 
 enum class Repeat { NONE, DAILY, WEEKDAYS, WEEKLY, FORTNIGHTLY, MONTHLY, YEARLY }
+
+enum class CountdownKind { BIRTHDAY, ANNIVERSARY, HOLIDAY, EVENT, OTHER }
 
 // everything in the explorer is an item, the type decides which extra table holds its data
 @Serializable
@@ -41,6 +44,17 @@ data class Item(
 data class NoteBody(
     @PrimaryKey val itemId: Long,
     val text: String = "",
+)
+
+// a spreadsheet saved as json, see util/Sheet.kt for what is inside
+@Serializable
+@Entity(
+    tableName = "sheets",
+    foreignKeys = [ForeignKey(entity = Item::class, parentColumns = ["id"], childColumns = ["itemId"], onDelete = ForeignKey.CASCADE)],
+)
+data class SheetBody(
+    @PrimaryKey val itemId: Long,
+    val json: String = "",
 )
 
 @Serializable
@@ -110,6 +124,8 @@ data class Event(
     val repeatRule: Repeat = Repeat.NONE,
     val repeatUntil: Long? = null,
     val created: Long = System.currentTimeMillis(),
+    // null follows the default in settings, -1 means no reminder, otherwise minutes before the start
+    val reminderMinutes: Int? = null,
 )
 
 @Serializable
@@ -125,6 +141,7 @@ data class Task(
     val repeatRule: Repeat = Repeat.NONE,
     val subjectId: Long? = null, // homework belongs to a timetable subject
     val created: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "1") val remind: Boolean = true,
 )
 
 @Serializable
@@ -163,4 +180,24 @@ data class Term(
     val name: String,
     val startDay: Long, // epoch day
     val endDay: Long,
+)
+
+@Serializable
+@Entity(tableName = "countdowns")
+data class Countdown(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    // epoch day, for birthdays the birth date
+    val date: Long,
+    val kind: CountdownKind = CountdownKind.EVENT,
+    val yearly: Boolean = false,
+    val yearKnown: Boolean = true,
+    val countUp: Boolean = false,
+    val color: Int? = null,
+    val emoji: String? = null,
+    val note: String? = null,
+    val pinned: Boolean = false,
+    val showOnCalendar: Boolean = true,
+    val remind: Boolean = true,
+    val created: Long = System.currentTimeMillis(),
 )

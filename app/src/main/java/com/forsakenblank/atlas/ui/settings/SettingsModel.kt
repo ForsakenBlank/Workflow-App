@@ -13,6 +13,7 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Navigation
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Timer
@@ -24,6 +25,7 @@ import com.forsakenblank.atlas.data.CalendarView
 import com.forsakenblank.atlas.data.CardStyle
 import com.forsakenblank.atlas.data.ExplorerSort
 import com.forsakenblank.atlas.data.FontChoice
+import com.forsakenblank.atlas.data.LongPress
 import com.forsakenblank.atlas.data.NoteLayout
 import com.forsakenblank.atlas.data.NoteSort
 import com.forsakenblank.atlas.data.Section
@@ -32,6 +34,10 @@ import com.forsakenblank.atlas.data.TaskSort
 import com.forsakenblank.atlas.data.TextSize
 import com.forsakenblank.atlas.data.ThemeMode
 import com.forsakenblank.atlas.data.Transition
+import com.forsakenblank.atlas.util.NO_REMINDER
+import com.forsakenblank.atlas.util.ReminderMinuteOptions
+import com.forsakenblank.atlas.util.formatMinuteOfDay
+import com.forsakenblank.atlas.util.reminderMinutesLabel
 import kotlin.math.roundToInt
 
 enum class SettingsCategory(val title: String, val blurb: String, val icon: ImageVector) {
@@ -44,6 +50,7 @@ enum class SettingsCategory(val title: String, val blurb: String, val icon: Imag
     CALENDAR("Calendar", "Week start, clock and what shows on days", Icons.Outlined.CalendarMonth),
     TIMETABLE("Timetable", "Week A and B, hours and subject folders", Icons.Outlined.School),
     TASKS("Tasks", "Sorting and finished tasks", Icons.Outlined.Checklist),
+    REMINDERS("Reminders", "Birthdays, tasks and events", Icons.Outlined.NotificationsActive),
     FOCUS("Focus", "Session and break lengths", Icons.Outlined.Timer),
     EXPLORER("Explorer", "Sorting, layout and trash", Icons.Outlined.FolderOpen),
     TOOLS("Tools", "Units and currency", Icons.Outlined.Calculate),
@@ -56,6 +63,7 @@ enum class SettingsCategory(val title: String, val blurb: String, val icon: Imag
 enum class SettingsAction {
     OPEN_THEMES, NEW_THEME, EDIT_TABS, BACKUP, RESTORE, STARTER_PACKS, EMPTY_TRASH,
     CLEAR_DONE_TASKS, RESET_SETTINGS, PICK_FOCUS_TRACKER, SUBJECTS, TERMS,
+    NOTIFICATION_SETTINGS, TEST_REMINDER,
 }
 
 sealed class Setting(
@@ -82,6 +90,8 @@ sealed class Setting(
         val label: (T) -> String,
         val get: (AppSettings) -> T,
         val set: (AppSettings, T) -> AppSettings,
+        // for labels that follow another setting, like the 12 or 24 hour clock
+        val labelWith: (AppSettings, T) -> String = { _, value -> label(value) },
     ) : Setting(category, title, summary, keywords)
 
     class Range(
@@ -234,6 +244,7 @@ val AllSettings: List<Setting> = listOf(
     Setting.Toggle(SettingsCategory.HOME, "Today's agenda", "Events and tasks due today", "agenda events tasks", get = { it.showAgenda }, set = { s, v -> s.copy(showAgenda = v) }),
     Setting.Toggle(SettingsCategory.HOME, "Sections row", "Quick links to Tasks, Focus, Tools and the rest", "sections links", get = { it.showSectionsRow }, set = { s, v -> s.copy(showSectionsRow = v) }),
     Setting.Toggle(SettingsCategory.HOME, "Pinned notes", "Notes you pin show on Home", "pinned notes", get = { it.showPinnedNotes }, set = { s, v -> s.copy(showPinnedNotes = v) }),
+    Setting.Toggle(SettingsCategory.HOME, "Countdowns", "Pinned and upcoming birthdays and dates", "countdown birthday upcoming", get = { it.showCountdowns }, set = { s, v -> s.copy(showCountdowns = v) }),
     Setting.Choice(
         SettingsCategory.HOME, "Shortcut size", "How big tracker buttons are", "shortcut button size grid",
         options = ShortcutSize.entries, label = { it.label }, get = { it.shortcutSize }, set = { s, v -> s.copy(shortcutSize = v) },
@@ -242,6 +253,10 @@ val AllSettings: List<Setting> = listOf(
         SettingsCategory.HOME, "Shortcut columns", "Fixed number of columns, or fit to the screen", "grid columns",
         options = listOf(0, 1, 2, 3, 4), label = { if (it == 0) "Fit to screen" else "$it" },
         get = { it.shortcutColumns }, set = { s, v -> s.copy(shortcutColumns = v) },
+    ),
+    Setting.Choice(
+        SettingsCategory.HOME, "Long press a shortcut", "Select several to remove, or jump to the tracker", "hold press select delete remove",
+        options = LongPress.entries, label = { it.label }, get = { it.shortcutLongPress }, set = { s, v -> s.copy(shortcutLongPress = v) },
     ),
 
     // notes
@@ -299,6 +314,53 @@ val AllSettings: List<Setting> = listOf(
     Setting.Toggle(SettingsCategory.TASKS, "Show finished tasks", get = { it.showCompletedTasks }, set = { s, v -> s.copy(showCompletedTasks = v) }),
     Setting.Toggle(SettingsCategory.TASKS, "Tasks on Home", "Tasks due today show in the Home agenda", "home agenda", get = { it.tasksOnHome }, set = { s, v -> s.copy(tasksOnHome = v) }),
     Setting.Action(SettingsCategory.TASKS, "Clear finished tasks", "Deletes every ticked task", "delete done", SettingsAction.CLEAR_DONE_TASKS, danger = true),
+
+    // reminders
+    Setting.Toggle(
+        SettingsCategory.REMINDERS, "Reminders", "Turn off to stop every reminder from Atlas", "notifications notify alerts remind",
+        get = { it.remindersOn }, set = { s, v -> s.copy(remindersOn = v) },
+    ),
+    Setting.Choice(
+        SettingsCategory.REMINDERS, "Morning reminder time", "When birthdays, tasks due and all day events remind you", "morning time notification",
+        options = (12..20).map { it * 30 } + listOf(660, 720), label = { formatMinuteOfDay(it) },
+        get = { it.reminderMinute }, set = { s, v -> s.copy(reminderMinute = v) },
+        labelWith = { s, v -> formatMinuteOfDay(v, s.use24Hour) },
+    ),
+    Setting.Toggle(
+        SettingsCategory.REMINDERS, "Task reminders", "On the morning a task is due", "task due homework notification",
+        get = { it.remindTasks }, set = { s, v -> s.copy(remindTasks = v) },
+    ),
+    Setting.Toggle(
+        SettingsCategory.REMINDERS, "Event reminders", "Before an event starts, or on the morning of an all day one", "calendar event notification",
+        get = { it.remindEvents }, set = { s, v -> s.copy(remindEvents = v) },
+    ),
+    Setting.Choice(
+        SettingsCategory.REMINDERS, "Before events", "How early events remind you. Each event can change this", "event minutes early alert",
+        options = listOf(NO_REMINDER) + ReminderMinuteOptions, label = ::reminderMinutesLabel,
+        get = { it.eventReminderMinutes }, set = { s, v -> s.copy(eventReminderMinutes = v) },
+    ),
+    Setting.Toggle(
+        SettingsCategory.REMINDERS, "Countdown reminders", "Birthdays, anniversaries and other big dates", "countdown birthday anniversary notification",
+        get = { it.remindCountdowns }, set = { s, v -> s.copy(remindCountdowns = v) },
+    ),
+    Setting.Choice(
+        SettingsCategory.REMINDERS, "Early countdown reminder", "An extra reminder before the day itself", "countdown birthday early days before",
+        options = listOf(0, 1, 2, 3, 7),
+        label = {
+            when (it) {
+                0 -> "Only on the day"
+                1 -> "1 day before"
+                7 -> "A week before"
+                else -> "$it days before"
+            }
+        },
+        get = { it.countdownDaysBefore }, set = { s, v -> s.copy(countdownDaysBefore = v) },
+    ),
+    Setting.Action(
+        SettingsCategory.REMINDERS, "Notification settings", "Sound, vibration and whether Atlas can notify you", "notifications sound vibrate allow blocked permission",
+        SettingsAction.NOTIFICATION_SETTINGS,
+    ),
+    Setting.Action(SettingsCategory.REMINDERS, "Send a test reminder", "Check that reminders get through", "test notification", SettingsAction.TEST_REMINDER),
 
     // focus
     Setting.Range(SettingsCategory.FOCUS, "Focus length", keywords = "pomodoro session", min = 5f, max = 90f, steps = 16, format = ::minutes, get = { it.focusMinutes.toFloat() }, set = { s, v -> s.copy(focusMinutes = v.roundToInt()) }),

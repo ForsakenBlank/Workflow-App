@@ -59,7 +59,10 @@ import com.forsakenblank.atlas.ui.theme.LocalSettings
 import com.forsakenblank.atlas.util.atMinute
 import com.forsakenblank.atlas.util.formatMinuteOfDay
 import com.forsakenblank.atlas.util.label
+import com.forsakenblank.atlas.util.NO_REMINDER
+import com.forsakenblank.atlas.util.ReminderMinuteOptions
 import com.forsakenblank.atlas.util.minuteOfDay
+import com.forsakenblank.atlas.util.reminderMinutesLabel
 import com.forsakenblank.atlas.util.startMillis
 import com.forsakenblank.atlas.util.toLocalDate
 import kotlinx.coroutines.launch
@@ -87,6 +90,7 @@ class EventEditorViewModel(private val id: Long, firstDay: Long, defaultMinutes:
     var repeatUntil by mutableStateOf<LocalDate?>(null)
     var location by mutableStateOf("")
     var notes by mutableStateOf("")
+    var reminderMinutes by mutableStateOf<Int?>(null) // null follows the default in settings
     var dirty by mutableStateOf(false)
 
     init {
@@ -105,6 +109,7 @@ class EventEditorViewModel(private val id: Long, firstDay: Long, defaultMinutes:
                     repeatUntil = e.repeatUntil?.toLocalDate()
                     location = e.location.orEmpty()
                     notes = e.notes.orEmpty()
+                    reminderMinutes = e.reminderMinutes
                 }
                 loaded = true
             }
@@ -135,6 +140,13 @@ class EventEditorViewModel(private val id: Long, firstDay: Long, defaultMinutes:
         dirty = true
     }
 
+    // far enough ahead that a few repeats still happen
+    fun untilSuggestion(): LocalDate = when (repeat) {
+        Repeat.YEARLY -> startDate.plusYears(5)
+        Repeat.MONTHLY -> startDate.plusYears(1)
+        else -> startDate.plusMonths(3)
+    }
+
     suspend fun save() {
         val event = (original ?: Event(title = "", startsAt = 0, endsAt = 0)).copy(
             title = title.trim(),
@@ -146,6 +158,7 @@ class EventEditorViewModel(private val id: Long, firstDay: Long, defaultMinutes:
             notes = notes.trim().ifEmpty { null },
             repeatRule = repeat,
             repeatUntil = if (repeat == Repeat.NONE) null else repeatUntil?.startMillis(),
+            reminderMinutes = reminderMinutes,
         )
         repo.saveEvent(event)
     }
@@ -161,7 +174,10 @@ private fun LocalDate.pickerMillis(): Long = atStartOfDay(ZoneOffset.UTC).toInst
 
 private fun Long.pickerDate(): LocalDate = Instant.ofEpochMilli(this).atZone(ZoneOffset.UTC).toLocalDate()
 
-private enum class Picking { START_DATE, START_TIME, END_DATE, END_TIME, UNTIL, REPEAT }
+private enum class Picking { START_DATE, START_TIME, END_DATE, END_TIME, UNTIL, REPEAT, REMINDER }
+
+private fun reminderChoiceLabel(minutes: Int?, default: Int): String =
+    if (minutes == null) "Default (${reminderMinutesLabel(default).lowercase()})" else reminderMinutesLabel(minutes)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -269,6 +285,36 @@ fun EventEditorScreen(id: Long, day: Long, navigator: AtlasNavigator) {
                     modifier = Modifier.clickable { picking = Picking.UNTIL },
                 )
             }
+            val remindersOff = !settings.remindersOn || !settings.remindEvents
+            if (vm.allDay) {
+                // all day events go off at the morning time, so there is only on or off
+                ListItem(
+                    headlineContent = { Text("Reminder") },
+                    supportingContent = {
+                        Column {
+                            Text("All day events remind you at ${formatMinuteOfDay(settings.reminderMinute, settings.use24Hour)} on the day")
+                            if (remindersOff) RemindersOffNote()
+                        }
+                    },
+                    trailingContent = {
+                        Switch(checked = vm.reminderMinutes != NO_REMINDER, onCheckedChange = {
+                            vm.reminderMinutes = if (it) null else NO_REMINDER
+                            vm.dirty = true
+                        })
+                    },
+                )
+            } else {
+                ListItem(
+                    headlineContent = { Text("Reminder") },
+                    supportingContent = {
+                        Column {
+                            Text(reminderChoiceLabel(vm.reminderMinutes, settings.eventReminderMinutes))
+                            if (remindersOff) RemindersOffNote()
+                        }
+                    },
+                    modifier = Modifier.clickable { picking = Picking.REMINDER },
+                )
+            }
             HorizontalDivider()
             OutlinedTextField(
                 value = vm.location,
@@ -309,7 +355,7 @@ fun EventEditorScreen(id: Long, day: Long, navigator: AtlasNavigator) {
             vm.dirty = true
             picking = null
         }
-        Picking.UNTIL -> DateDialog(vm.repeatUntil ?: vm.startDate.plusMonths(3), onDismiss = { picking = null }) {
+        Picking.UNTIL -> DateDialog(vm.repeatUntil ?: vm.untilSuggestion(), onDismiss = { picking = null }) {
             vm.repeatUntil = it
             vm.dirty = true
             picking = null
@@ -320,6 +366,11 @@ fun EventEditorScreen(id: Long, day: Long, navigator: AtlasNavigator) {
         }
         Picking.END_TIME -> TimeDialog(vm.endMinute, settings.use24Hour, onDismiss = { picking = null }) {
             vm.endMinute = it
+            vm.dirty = true
+            picking = null
+        }
+        Picking.REMINDER -> ReminderDialog(vm.reminderMinutes, settings.eventReminderMinutes, onDismiss = { picking = null }) {
+            vm.reminderMinutes = it
             vm.dirty = true
             picking = null
         }
@@ -409,6 +460,37 @@ private fun RepeatDialog(current: Repeat, onDismiss: () -> Unit, onPick: (Repeat
                     ) {
                         RadioButton(selected = option == current, onClick = null)
                         Text(option.label(), modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun RemindersOffNote() {
+    Text("Event reminders are off in Settings", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+}
+
+@Composable
+private fun ReminderDialog(current: Int?, default: Int, onDismiss: () -> Unit, onPick: (Int?) -> Unit) {
+    val options = listOf<Int?>(null, NO_REMINDER) + ReminderMinuteOptions
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Reminder") },
+        text = {
+            Column {
+                options.forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(selected = option == current, role = Role.RadioButton) { onPick(option) }
+                            .padding(vertical = 6.dp),
+                    ) {
+                        RadioButton(selected = option == current, onClick = null)
+                        Text(reminderChoiceLabel(option, default), modifier = Modifier.padding(start = 12.dp))
                     }
                 }
             }
