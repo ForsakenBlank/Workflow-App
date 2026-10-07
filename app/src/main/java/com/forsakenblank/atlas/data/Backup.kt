@@ -29,9 +29,11 @@ data class Backup(
     // added in version 4
     val moneyAccounts: List<MoneyAccount> = emptyList(),
     val moneyEntries: List<MoneyEntry> = emptyList(),
+    // added in version 5
+    val moneyQuick: List<MoneyQuick> = emptyList(),
 ) {
     companion object {
-        const val CURRENT_VERSION = 4
+        const val CURRENT_VERSION = 5
     }
 }
 

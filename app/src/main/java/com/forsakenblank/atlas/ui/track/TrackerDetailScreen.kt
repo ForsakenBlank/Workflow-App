@@ -42,6 +42,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,6 +80,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
 class TrackerDetailViewModel(private val id: Long, private val repo: AtlasRepository) : ViewModel() {
@@ -105,6 +109,10 @@ class TrackerDetailViewModel(private val id: Long, private val repo: AtlasReposi
         viewModelScope.launch { repo.logValue(id, value, note) }
     }
 
+    fun logPast(day: LocalDate, count: Int, value: Double, seconds: Long?, note: String?) {
+        viewModelScope.launch { repo.logPast(id, day, count, value, seconds, note) }
+    }
+
     fun tap() {
         viewModelScope.launch { repo.tap(id) }
     }
@@ -129,6 +137,8 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
     var menuOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var logging by remember { mutableStateOf(false) }
+    var loggingPast by remember { mutableStateOf(false) }
+    var range by rememberSaveable { mutableStateOf(StatRange.WEEK) }
     var confirmDelete by remember { mutableStateOf<LogEntry?>(null) }
 
     Scaffold(
@@ -170,27 +180,35 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
         val streak = remember(byDay) { streaks(byDay.keys) }
         val today = LocalDate.now()
         val kind = t.tracker.kind
-        val chartDays = settings.chartDays.coerceIn(7, 90)
-        val shownDays = (chartDays - 1 downTo 0).map { today.minusDays(it.toLong()) }
-        val dayValues = shownDays.map { dayValue(t.tracker, byDay[it].orEmpty()) }
-        val values = dayValues.map { (it ?: 0.0).toFloat() }
         val unitLabel = if (kind == TrackerKind.TIMER) "min" else t.tracker.unit.orEmpty()
         // totals make sense for counts and sums, averages for ratings and things like weight
         val averages = kind == TrackerKind.RATING || (kind == TrackerKind.NUMBER && t.tracker.aggregate != null && t.tracker.aggregate != Aggregate.SUM)
-        val lastWeek = dayValues.takeLast(7).filterNotNull()
-        val weekLabel = if (averages) "7 day average" else "Last 7 days"
-        val weekValue = when {
-            averages && lastWeek.isEmpty() -> "None"
-            averages -> "${formatNumber(lastWeek.average())} $unitLabel".trim()
-            else -> "${formatNumber(lastWeek.sum())} $unitLabel".trim()
+        val firstDay = byDay.keys.minOrNull() ?: today
+        val start = range.days?.let { today.minusDays(it - 1L) } ?: minOf(firstDay, today)
+        val inRange = byDay.filterKeys { it >= start }
+        val rangeValues = inRange.mapNotNull { (_, dayLogs) -> dayValue(t.tracker, dayLogs) }
+        val rangeLabel = if (averages) "Average, ${range.label.lowercase()}" else "Total, ${range.label.lowercase()}"
+        val rangeStat = when {
+            rangeValues.isEmpty() -> "None"
+            averages -> "${formatNumber(rangeValues.average())} $unitLabel".trim()
+            else -> "${formatNumber(rangeValues.sum())} $unitLabel".trim()
         }
-        val allTime = when (kind) {
-            TrackerKind.TIMER -> formatDuration(logs.sumOf { it.durationSeconds ?: 0L })
-            TrackerKind.NUMBER, TrackerKind.RATING -> {
-                val all = byDay.values.mapNotNull { dayValue(t.tracker, it) }
-                if (all.isEmpty()) "None" else if (averages) formatNumber(all.average()) else formatNumber(all.sum())
+        val spanDays = ChronoUnit.DAYS.between(start, today).toInt() + 1
+        // a long stretch is shown a month at a time so the bars stay readable
+        val monthly = spanDays > 45
+        val values: List<Float>
+        val firstLabel: String
+        if (monthly) {
+            val months = generateSequence(YearMonth.from(start)) { it.plusMonths(1) }.takeWhile { it <= YearMonth.from(today) }.toList()
+            values = months.map { month ->
+                val perDay = byDay.filterKeys { YearMonth.from(it) == month }.values.mapNotNull { dayValue(t.tracker, it) }
+                (if (averages) perDay.average().takeIf { perDay.isNotEmpty() } ?: 0.0 else perDay.sum()).toFloat()
             }
-            else -> "${logs.size}"
+            firstLabel = months.first().format(DateTimeFormatter.ofPattern("MMM yyyy"))
+        } else {
+            val shownDays = (spanDays - 1 downTo 0).map { today.minusDays(it.toLong()) }
+            values = shownDays.map { (dayValue(t.tracker, byDay[it].orEmpty()) ?: 0.0).toFloat() }
+            firstLabel = shownDays.first().format(DateTimeFormatter.ofPattern("d MMM"))
         }
         val todaySummary = TrackerSummary(
             item = t.item,
@@ -225,25 +243,37 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
                 }
             }
             item {
+                OutlinedButton(onClick = { loggingPast = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Log something in the past")
+                }
+            }
+            item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatCard("Current streak", "${streak.current} d", Modifier.weight(1f))
                     StatCard("Best streak", "${streak.best} d", Modifier.weight(1f))
                 }
             }
             item {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatRange.entries.forEach { r ->
+                        FilterChip(selected = range == r, onClick = { range = r }, label = { Text(r.label) })
+                    }
+                }
+            }
+            item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatCard(weekLabel, weekValue, Modifier.weight(1f))
-                    StatCard(if (averages) "All time average" else "All time", allTime, Modifier.weight(1f))
+                    StatCard(rangeLabel, rangeStat, Modifier.weight(1f))
+                    StatCard("Days logged", "${inRange.size}", Modifier.weight(1f))
                 }
             }
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Last $chartDays days", style = MaterialTheme.typography.titleSmall)
+                        Text(if (monthly) "${range.label}, by month" else range.label, style = MaterialTheme.typography.titleSmall)
                         BarChart(values, accent, goal = if (kind == TrackerKind.RATING) 5f else t.tracker.dailyGoal?.toFloat())
                         Row {
-                            Text(shownDays.first().format(DateTimeFormatter.ofPattern("d MMM")), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-                            Text("Today", style = MaterialTheme.typography.labelSmall)
+                            Text(firstLabel, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                            Text(if (monthly) "This month" else "Today", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -297,6 +327,18 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
             },
         )
     }
+    if (loggingPast && t != null) {
+        PastLogDialog(
+            kind = t.tracker.kind,
+            name = t.item.name,
+            unit = t.tracker.unit,
+            onDismiss = { loggingPast = false },
+            onSave = { day, count, value, seconds, note ->
+                vm.logPast(day, count, value, seconds, note)
+                loggingPast = false
+            },
+        )
+    }
     if (logging && t != null) {
         val todayLogs = logs.filter { it.timestamp.toLocalDate() == LocalDate.now() }
         LogValueDialog(
@@ -316,6 +358,14 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
             onDismiss = { confirmDelete = null },
         ) { vm.deleteLog(entry) }
     }
+}
+
+// how far back the numbers and the chart look, a null length means everything
+private enum class StatRange(val label: String, val days: Int?) {
+    WEEK("Week", 7),
+    MONTH("Month", 30),
+    YEAR("Year", 365),
+    ALL("All time", null),
 }
 
 @Composable

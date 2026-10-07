@@ -13,6 +13,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -33,9 +34,12 @@ import com.forsakenblank.atlas.data.AppSettings
 import com.forsakenblank.atlas.data.AtlasRepository
 import com.forsakenblank.atlas.data.TrackerKind
 import com.forsakenblank.atlas.ui.LocalSnackbar
+import com.forsakenblank.atlas.ui.common.DayPickerDialog
 import com.forsakenblank.atlas.ui.common.atlasApp
 import com.forsakenblank.atlas.ui.theme.LocalSettings
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 // what tapping a tracker does, shared by home and the track tab
 @Composable
@@ -154,4 +158,108 @@ fun LogValueDialog(summary: TrackerSummary, onDismiss: () -> Unit, onLog: (Doubl
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+// logs something that happened on an earlier day, what it asks for depends on the kind of tracker
+@Composable
+fun PastLogDialog(
+    kind: TrackerKind,
+    name: String,
+    unit: String?,
+    onDismiss: () -> Unit,
+    onSave: (day: LocalDate, count: Int, value: Double, seconds: Long?, note: String?) -> Unit,
+) {
+    val today = LocalDate.now()
+    var day by remember { mutableStateOf(today.minusDays(1)) }
+    var picking by remember { mutableStateOf(false) }
+    var count by remember { mutableStateOf("1") }
+    var amount by remember { mutableStateOf("") }
+    var minutes by remember { mutableStateOf("") }
+    var stars by remember { mutableIntStateOf(0) }
+    var note by remember { mutableStateOf("") }
+
+    val value = when (kind) {
+        TrackerKind.RATING -> stars.takeIf { it > 0 }?.toDouble()
+        TrackerKind.NUMBER -> amount.replace(',', '.').toDoubleOrNull()
+        else -> 1.0
+    }
+    val seconds = minutes.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 }?.let { (it * 60).toLong() }
+    val countValue = count.toIntOrNull()?.takeIf { it in 1..100 }
+    val ready = when (kind) {
+        TrackerKind.TIMER -> seconds != null
+        TrackerKind.COUNTER -> countValue != null
+        else -> value != null
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Log in the past") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(onClick = { picking = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(day.format(DateTimeFormatter.ofPattern("EEE d MMM yyyy")))
+                }
+                when (kind) {
+                    TrackerKind.COUNTER -> OutlinedTextField(
+                        value = count,
+                        onValueChange = { count = it.filter { c -> c.isDigit() }.take(3) },
+                        label = { Text("How many times") },
+                        singleLine = true,
+                        isError = countValue == null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TrackerKind.NUMBER -> OutlinedTextField(
+                        value = amount,
+                        onValueChange = { amount = it.take(12) },
+                        label = { Text(unit?.let { "Amount in $it" } ?: "Amount") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TrackerKind.TIMER -> OutlinedTextField(
+                        value = minutes,
+                        onValueChange = { minutes = it.take(8) },
+                        label = { Text("Minutes") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TrackerKind.RATING -> Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        (1..5).forEach { n ->
+                            IconButton(onClick = { stars = n }) {
+                                Icon(
+                                    if (n <= stars) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                                    contentDescription = "$n stars",
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(32.dp),
+                                )
+                            }
+                        }
+                    }
+                    TrackerKind.YES_NO -> Text("Marks this day as done.", style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it.take(200) },
+                    label = { Text("Note (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = ready,
+                onClick = { onSave(day, countValue ?: 1, value ?: 1.0, seconds, note.trim().ifEmpty { null }) },
+            ) { Text("Log") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+    if (picking) {
+        DayPickerDialog(day.toEpochDay(), onDismiss = { picking = false }, maxDay = today.toEpochDay()) {
+            day = LocalDate.ofEpochDay(it)
+            picking = false
+        }
+    }
 }

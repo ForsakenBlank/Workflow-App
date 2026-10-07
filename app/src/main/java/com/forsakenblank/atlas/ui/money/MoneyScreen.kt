@@ -26,20 +26,17 @@ import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -62,15 +59,17 @@ import androidx.lifecycle.viewModelScope
 import com.forsakenblank.atlas.data.AtlasRepository
 import com.forsakenblank.atlas.data.MoneyAccount
 import com.forsakenblank.atlas.data.MoneyEntry
+import com.forsakenblank.atlas.data.MoneyQuick
 import com.forsakenblank.atlas.ui.AtlasNavigator
 import com.forsakenblank.atlas.ui.common.AtlasCard
 import com.forsakenblank.atlas.ui.common.ColorRow
 import com.forsakenblank.atlas.ui.common.EmptyState
+import com.forsakenblank.atlas.ui.common.DayPickerDialog
 import com.forsakenblank.atlas.ui.common.SectionTitle
 import com.forsakenblank.atlas.ui.common.atlasViewModel
 import com.forsakenblank.atlas.ui.common.toItemColor
 import com.forsakenblank.atlas.ui.settings.ConfirmDialog
-import com.forsakenblank.atlas.util.DAY_MS
+import com.forsakenblank.atlas.util.currentBalance
 import com.forsakenblank.atlas.util.parsePence
 import com.forsakenblank.atlas.util.penceInput
 import com.forsakenblank.atlas.util.pounds
@@ -92,6 +91,17 @@ class MoneyViewModel(private val repo: AtlasRepository) : ViewModel() {
     val entries: StateFlow<List<MoneyEntry>> =
         repo.moneyEntries().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val quicks: StateFlow<List<MoneyQuick>> =
+        repo.moneyQuick().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun saveQuick(quick: MoneyQuick) {
+        viewModelScope.launch { repo.saveMoneyQuick(quick) }
+    }
+
+    fun deleteQuick(id: Long) {
+        viewModelScope.launch { repo.deleteMoneyQuick(id) }
+    }
+
     fun saveEntry(entry: MoneyEntry) {
         viewModelScope.launch { repo.saveMoneyEntry(entry) }
     }
@@ -108,8 +118,8 @@ class MoneyViewModel(private val repo: AtlasRepository) : ViewModel() {
         viewModelScope.launch { repo.deleteMoneyAccount(id) }
     }
 
-    fun transfer(from: Long, to: Long, day: Long, pence: Long, note: String?) {
-        viewModelScope.launch { repo.moneyTransfer(from, to, day, pence, note) }
+    fun transfer(from: Long, to: Long, day: Long, pence: Long, note: String?, historical: Boolean) {
+        viewModelScope.launch { repo.moneyTransfer(from, to, day, pence, note, historical) }
     }
 }
 
@@ -128,6 +138,7 @@ private class EntryDraft(
     val category: String,
     val note: String,
     val day: Long,
+    val historical: Boolean,
 )
 
 private class AccountDraft(val source: MoneyAccount?, val name: String, val opening: String, val color: Int?)
@@ -137,6 +148,9 @@ fun MoneyScreen(navigator: AtlasNavigator) {
     val vm = atlasViewModel { MoneyViewModel(it.repository) }
     val accountList by vm.accounts.collectAsStateWithLifecycle()
     val entries by vm.entries.collectAsStateWithLifecycle()
+    val quicks by vm.quicks.collectAsStateWithLifecycle()
+    val logQuick = rememberQuickLogger()
+    var deletingQuick by remember { mutableStateOf<MoneyQuick?>(null) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
 
     var entryDraft by remember { mutableStateOf<EntryDraft?>(null) }
@@ -151,8 +165,8 @@ fun MoneyScreen(navigator: AtlasNavigator) {
     }
     val today = LocalDate.now().toEpochDay()
     val balances = remember(accounts, entries) {
-        val sums = entries.groupBy { it.accountId }.mapValues { (_, list) -> list.sumOf { it.amountPence } }
-        accounts.associate { it.id to it.openingPence + (sums[it.id] ?: 0L) }
+        val byAccount = entries.groupBy { it.accountId }
+        accounts.associate { it.id to currentBalance(it.openingPence, byAccount[it.id].orEmpty()) }
     }
 
     fun newEntry(earn: Boolean) {
@@ -161,7 +175,7 @@ fun MoneyScreen(navigator: AtlasNavigator) {
             accountDraft = AccountDraft(null, "Current account", "", null)
         } else {
             val last = entries.firstOrNull { it.transferId == null }?.accountId ?: first.id
-            entryDraft = EntryDraft(null, last, earn, "", "", "", today)
+            entryDraft = EntryDraft(null, last, earn, "", "", "", today, historical = false)
         }
     }
 
@@ -185,7 +199,9 @@ fun MoneyScreen(navigator: AtlasNavigator) {
                 }
             } else when (tab) {
                 0 -> Overview(
-                    accounts, balances, entries,
+                    accounts, balances, entries, quicks,
+                    onQuick = logQuick,
+                    onQuickHold = { deletingQuick = it },
                     onAccount = { acc -> accountDraft = AccountDraft(acc, acc.name, penceInput(acc.openingPence), acc.color) },
                     onNewAccount = { accountDraft = AccountDraft(null, "", "", null) },
                     onTransfer = { transferOpen = true },
@@ -199,7 +215,7 @@ fun MoneyScreen(navigator: AtlasNavigator) {
                         } else {
                             entryDraft = EntryDraft(
                                 entry, entry.accountId, entry.amountPence > 0, penceInput(kotlin.math.abs(entry.amountPence)),
-                                entry.category.orEmpty(), entry.note.orEmpty(), entry.day,
+                                entry.category.orEmpty(), entry.note.orEmpty(), entry.day, entry.historical,
                             )
                         }
                     },
@@ -224,8 +240,14 @@ fun MoneyScreen(navigator: AtlasNavigator) {
             recent = entries.mapNotNull { it.category?.takeIf { c -> c.isNotBlank() && c != "Transfer" } }.distinct().take(8),
             onDismiss = { entryDraft = null },
             onDelete = draft.source?.let { source -> { deleting = source } },
-            onSave = { entry ->
+            onSave = { entry, asQuick ->
                 vm.saveEntry(entry)
+                if (asQuick) {
+                    val label = entry.category?.takeIf { it.isNotBlank() } ?: entry.note?.takeIf { it.isNotBlank() } ?: "Quick add"
+                    vm.saveQuick(
+                        MoneyQuick(accountId = entry.accountId, name = label, amountPence = entry.amountPence, category = entry.category, note = entry.note)
+                    )
+                }
                 entryDraft = null
             },
         )
@@ -250,10 +272,19 @@ fun MoneyScreen(navigator: AtlasNavigator) {
         TransferDialog(
             accounts = accounts,
             onDismiss = { transferOpen = false },
-            onSave = { from, to, day, pence, note ->
-                vm.transfer(from, to, day, pence, note)
+            onSave = { from, to, day, pence, note, historical ->
+                vm.transfer(from, to, day, pence, note, historical)
                 transferOpen = false
             },
+        )
+    }
+    deletingQuick?.let { quick ->
+        ConfirmDialog(
+            title = "Remove quick add?",
+            body = "${quick.name} ${signedPounds(quick.amountPence)} will no longer show as a shortcut. Entries you already added stay.",
+            button = "Remove",
+            onDismiss = { deletingQuick = null },
+            onConfirm = { vm.deleteQuick(quick.id) },
         )
     }
     deleting?.let { entry ->
@@ -275,6 +306,9 @@ private fun Overview(
     accounts: List<MoneyAccount>,
     balances: Map<Long, Long>,
     entries: List<MoneyEntry>,
+    quicks: List<MoneyQuick>,
+    onQuick: (MoneyQuick) -> Unit,
+    onQuickHold: (MoneyQuick) -> Unit,
     onAccount: (MoneyAccount) -> Unit,
     onNewAccount: () -> Unit,
     onTransfer: () -> Unit,
@@ -326,6 +360,25 @@ private fun Overview(
                     Spacer(Modifier.width(6.dp))
                     Text("Tax calculator")
                 }
+            }
+        }
+        item {
+            SectionTitle("Quick add")
+            if (quicks.isEmpty()) {
+                Text(
+                    "Turn on Save as quick add when you add an entry and it shows up here for one tap next time.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Spacer(Modifier.size(6.dp))
+                QuickMoneyRow(quicks, onTap = onQuick, onLongPress = onQuickHold)
+                Text(
+                    "Tap to add now, hold to remove",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         }
         item { SectionTitle("Accounts") }
@@ -385,7 +438,7 @@ private fun Activity(accounts: List<MoneyAccount>, entries: List<MoneyEntry>, on
                             Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(entry.category?.takeIf { it.isNotBlank() } ?: "Uncategorised", style = MaterialTheme.typography.bodyLarge)
-                                    val sub = listOfNotNull(names[entry.accountId], entry.note?.takeIf { it.isNotBlank() }).joinToString(" · ")
+                                    val sub = listOfNotNull(names[entry.accountId], if (entry.historical) "past record" else null, entry.note?.takeIf { it.isNotBlank() }).joinToString(" · ")
                                     Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 Text(
@@ -406,21 +459,6 @@ private fun Activity(accounts: List<MoneyAccount>, entries: List<MoneyEntry>, on
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DayPickerDialog(day: Long, onDismiss: () -> Unit, onPick: (Long) -> Unit) {
-    val state = rememberDatePickerState(initialSelectedDateMillis = day * DAY_MS)
-    DatePickerDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = { state.selectedDateMillis?.let { onPick(Math.floorDiv(it, DAY_MS)) } }) { Text("OK") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    ) {
-        DatePicker(state = state)
-    }
-}
-
 @Composable
 private fun AccountChips(accounts: List<MoneyAccount>, selected: Long, onSelect: (Long) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -437,8 +475,9 @@ private fun EntryDialog(
     recent: List<String>,
     onDismiss: () -> Unit,
     onDelete: (() -> Unit)?,
-    onSave: (MoneyEntry) -> Unit,
+    onSave: (MoneyEntry, Boolean) -> Unit,
 ) {
+    var asQuick by remember { mutableStateOf(false) }
     var earn by remember { mutableStateOf(draft.earn) }
     var amount by remember { mutableStateOf(draft.amount) }
     var category by remember { mutableStateOf(draft.category) }
@@ -446,6 +485,9 @@ private fun EntryDialog(
     var day by remember { mutableStateOf(draft.day) }
     var accountId by remember { mutableStateOf(draft.accountId) }
     var picking by remember { mutableStateOf(false) }
+    var historical by remember { mutableStateOf(draft.historical) }
+    // follows the date until it has been flipped by hand
+    var touched by remember { mutableStateOf(draft.source != null) }
     val pence = parsePence(amount)?.takeIf { it > 0 }
 
     AlertDialog(
@@ -492,6 +534,23 @@ private fun EntryDialog(
                 OutlinedButton(onClick = { picking = true }, modifier = Modifier.fillMaxWidth()) {
                     Text(LocalDate.ofEpochDay(day).format(dayFormat))
                 }
+                PastRecordSwitch(historical) {
+                    historical = it
+                    touched = true
+                }
+                if (draft.source == null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Save as quick add")
+                            Text(
+                                "One tap on Home or here to add it again",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = asQuick, onCheckedChange = { asQuick = it })
+                    }
+                }
             }
         },
         confirmButton = {
@@ -504,10 +563,12 @@ private fun EntryDialog(
                             base.copy(
                                 accountId = accountId,
                                 day = day,
+                                historical = historical,
                                 amountPence = if (earn) value else -value,
                                 category = category.trim().ifEmpty { null },
                                 note = note.trim().ifEmpty { null },
-                            )
+                            ),
+                            asQuick,
                         )
                     }
                 },
@@ -523,8 +584,25 @@ private fun EntryDialog(
     if (picking) {
         DayPickerDialog(day, onDismiss = { picking = false }) {
             day = it
+            if (!touched) historical = it < LocalDate.now().toEpochDay()
             picking = false
         }
+    }
+}
+
+// a record from before you started tracking, it is in the lists and charts but the balance stays put
+@Composable
+private fun PastRecordSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text("Past record only")
+            Text(
+                "Keeps the account balance as it is",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
@@ -593,7 +671,7 @@ private fun AccountDialog(draft: AccountDraft, onDismiss: () -> Unit, onDelete: 
 private fun TransferDialog(
     accounts: List<MoneyAccount>,
     onDismiss: () -> Unit,
-    onSave: (from: Long, to: Long, day: Long, pence: Long, note: String?) -> Unit,
+    onSave: (from: Long, to: Long, day: Long, pence: Long, note: String?, historical: Boolean) -> Unit,
 ) {
     var from by remember { mutableStateOf(accounts.first().id) }
     var to by remember { mutableStateOf(accounts.first { it.id != accounts.first().id }.id) }
@@ -601,6 +679,8 @@ private fun TransferDialog(
     var note by remember { mutableStateOf("") }
     var day by remember { mutableStateOf(LocalDate.now().toEpochDay()) }
     var picking by remember { mutableStateOf(false) }
+    var historical by remember { mutableStateOf(false) }
+    var touched by remember { mutableStateOf(false) }
     val pence = parsePence(amount)?.takeIf { it > 0 }
 
     AlertDialog(
@@ -633,12 +713,16 @@ private fun TransferDialog(
                 OutlinedButton(onClick = { picking = true }, modifier = Modifier.fillMaxWidth()) {
                     Text(LocalDate.ofEpochDay(day).format(dayFormat))
                 }
+                PastRecordSwitch(historical) {
+                    historical = it
+                    touched = true
+                }
             }
         },
         confirmButton = {
             TextButton(
                 enabled = pence != null,
-                onClick = { pence?.let { onSave(from, to, day, it, note.trim().ifEmpty { null }) } },
+                onClick = { pence?.let { onSave(from, to, day, it, note.trim().ifEmpty { null }, historical) } },
             ) { Text("Move") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
@@ -646,6 +730,7 @@ private fun TransferDialog(
     if (picking) {
         DayPickerDialog(day, onDismiss = { picking = false }) {
             day = it
+            if (!touched) historical = it < LocalDate.now().toEpochDay()
             picking = false
         }
     }

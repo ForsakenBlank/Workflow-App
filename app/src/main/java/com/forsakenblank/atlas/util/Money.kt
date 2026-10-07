@@ -26,6 +26,10 @@ fun parsePence(text: String, allowNegative: Boolean = false): Long? {
 // plain text for an edit box, 1250 becomes 12.50
 fun penceInput(pence: Long): String = BigDecimal.valueOf(pence, 2).toPlainString()
 
+// what an account holds now, records marked as past leave it alone
+fun currentBalance(openingPence: Long, entries: List<MoneyEntry>): Long =
+    openingPence + entries.filter { !it.historical }.sumOf { it.amountPence }
+
 // transfers move money around but do not count as earning or spending
 private fun List<MoneyEntry>.real() = filter { it.transferId == null }
 
@@ -54,13 +58,17 @@ fun categoryTotals(entries: List<MoneyEntry>, fromDay: Long): List<Pair<String, 
         .map { (name, list) -> name to -list.sumOf { it.amountPence } }
         .sortedByDescending { it.second }
 
-// the total across every account at the end of each day, entries dated in the past are counted in
-fun balanceSeries(openingTotal: Long, entries: List<MoneyEntry>, fromDay: Long, toDay: Long): List<Pair<Long, Long>> {
+// the total across every account at the end of each day, worked backwards from what it is today
+// so entries dated in the past make the line fit what happened without moving today's number
+fun balanceSeries(currentTotal: Long, entries: List<MoneyEntry>, fromDay: Long, toDay: Long): List<Pair<Long, Long>> {
     if (toDay < fromDay) return emptyList()
     val byDay = entries.groupBy { it.day }
-    var balance = openingTotal + entries.filter { it.day < fromDay }.sumOf { it.amountPence }
-    return (fromDay..toDay).map { day ->
-        balance += byDay[day].orEmpty().sumOf { it.amountPence }
-        day to balance
+    // anything dated after the last day shown has not happened yet as far as the chart goes
+    var balance = currentTotal - entries.filter { it.day > toDay }.sumOf { it.amountPence }
+    val out = ArrayList<Pair<Long, Long>>()
+    for (day in toDay downTo fromDay) {
+        out += day to balance
+        balance -= byDay[day].orEmpty().sumOf { it.amountPence }
     }
+    return out.reversed()
 }

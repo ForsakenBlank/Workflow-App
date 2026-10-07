@@ -74,6 +74,7 @@ import com.forsakenblank.atlas.data.Term
 import com.forsakenblank.atlas.data.TimetableSlot
 import com.forsakenblank.atlas.ui.AtlasNavigator
 import com.forsakenblank.atlas.ui.LocalSnackbar
+import com.forsakenblank.atlas.ui.money.HomeQuickMoney
 import com.forsakenblank.atlas.ui.common.AtlasCard
 import com.forsakenblank.atlas.ui.common.SectionTitle
 import com.forsakenblank.atlas.ui.common.SelectionBar
@@ -243,6 +244,10 @@ fun HomeScreen(navigator: AtlasNavigator) {
                         onSeeAll = { navigator.openSection(Section.COUNTDOWNS, Section.COUNTDOWNS in settings.tabs) },
                     )
                 }
+            }
+
+            if (Section.MONEY !in settings.hiddenSections) {
+                fullWidth { HomeQuickMoney(navigator, isTab = Section.MONEY in settings.tabs) }
             }
 
             if (settings.showSectionsRow && extraSections.isNotEmpty()) {

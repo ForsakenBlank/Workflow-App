@@ -45,9 +45,9 @@ class Converters {
     entities = [
         Item::class, NoteBody::class, Tracker::class, LogEntry::class, Tag::class, ItemTag::class,
         Event::class, Task::class, Subject::class, TimetableSlot::class, Term::class,
-        SheetBody::class, Countdown::class, MoneyAccount::class, MoneyEntry::class,
+        SheetBody::class, Countdown::class, MoneyAccount::class, MoneyEntry::class, MoneyQuick::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -144,7 +144,21 @@ abstract class AtlasDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        // version 5 lets a money entry be a past record that does not touch the balance and adds quick adds
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `money_entries` ADD COLUMN `historical` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `money_quick` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`accountId` INTEGER NOT NULL, `name` TEXT NOT NULL, `amountPence` INTEGER NOT NULL, " +
+                        "`category` TEXT, `note` TEXT, `sortOrder` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`accountId`) REFERENCES `money_accounts`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_money_quick_accountId` ON `money_quick` (`accountId`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
     }
 }
 

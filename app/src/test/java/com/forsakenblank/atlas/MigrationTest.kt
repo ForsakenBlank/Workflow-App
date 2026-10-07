@@ -13,6 +13,7 @@ import com.forsakenblank.atlas.data.Countdown
 import com.forsakenblank.atlas.data.CountdownKind
 import com.forsakenblank.atlas.data.Event
 import com.forsakenblank.atlas.data.MoneyAccount
+import com.forsakenblank.atlas.data.MoneyQuick
 import com.forsakenblank.atlas.data.Subject
 import com.forsakenblank.atlas.data.Task
 import com.forsakenblank.atlas.data.TimetableSlot
@@ -175,8 +176,16 @@ class MigrationTest {
         assertEquals(0L, repo.snapshot().moneyEntries.sumOf { it.amountPence })
         repo.deleteMoneyEntry(repo.snapshot().moneyEntries.first())
         assertEquals(0, repo.snapshot().moneyEntries.size)
+
+        // a quick add logs a normal entry dated today
+        repo.saveMoneyQuick(MoneyQuick(accountId = current, name = "Coffee", amountPence = -350, category = "Food"))
+        val logged = repo.logMoneyQuick(repo.snapshot().moneyQuick.single().id)!!
+        assertEquals(-350L, logged.amountPence)
+        assertEquals(java.time.LocalDate.now().toEpochDay(), logged.day)
+
         repo.deleteMoneyAccount(current)
         assertEquals(1, repo.snapshot().moneyAccounts.size)
+        assertEquals(0, repo.snapshot().moneyQuick.size)
         db.close()
     }
 }

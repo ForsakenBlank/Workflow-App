@@ -229,5 +229,24 @@ data class MoneyEntry(
     val category: String? = null,
     val note: String? = null,
     val transferId: Long? = null, // both halves of a transfer share this, they stay out of earning and spending totals
+    // a record of something in the past, it shows in activity and charts but leaves the balance alone
+    @ColumnInfo(defaultValue = "0") val historical: Boolean = false,
     val created: Long = System.currentTimeMillis(),
+)
+
+// a saved one tap entry like a coffee, logging it adds a normal entry dated today
+@Serializable
+@Entity(
+    tableName = "money_quick",
+    indices = [Index("accountId")],
+    foreignKeys = [ForeignKey(entity = MoneyAccount::class, parentColumns = ["id"], childColumns = ["accountId"], onDelete = ForeignKey.CASCADE)],
+)
+data class MoneyQuick(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val accountId: Long,
+    val name: String,
+    val amountPence: Long, // negative is spending
+    val category: String? = null,
+    val note: String? = null,
+    val sortOrder: Int = 0,
 )

@@ -41,6 +41,7 @@ import com.forsakenblank.atlas.ui.common.AtlasCard
 import com.forsakenblank.atlas.util.MonthTotal
 import com.forsakenblank.atlas.util.balanceSeries
 import com.forsakenblank.atlas.util.categoryTotals
+import com.forsakenblank.atlas.util.currentBalance
 import com.forsakenblank.atlas.util.monthlyTotals
 import com.forsakenblank.atlas.util.pounds
 import java.time.LocalDate
@@ -70,8 +71,9 @@ fun MoneyCharts(accounts: List<MoneyAccount>, entries: List<MoneyEntry>) {
     val fromDay = if (range.months > 0) today.minusMonths(range.months.toLong() - 1).withDayOfMonth(1).toEpochDay() else earliest
 
     val totals = remember(entries, months) { monthlyTotals(entries, months, today) }
-    val opening = accounts.sumOf { it.openingPence }
-    val series = remember(entries, opening, fromDay) { balanceSeries(opening, entries, fromDay, today.toEpochDay()) }
+    // past records leave the balance alone, so today's number is the anchor and the line is worked out backwards from it
+    val current = currentBalance(accounts.sumOf { it.openingPence }, entries)
+    val series = remember(entries, current, fromDay) { balanceSeries(current, entries, fromDay, today.toEpochDay()) }
     val categories = remember(entries, fromDay) { categoryTotals(entries, fromDay) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

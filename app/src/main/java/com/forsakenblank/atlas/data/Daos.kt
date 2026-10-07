@@ -178,6 +178,9 @@ interface TrackerDao {
     @Query("SELECT * FROM log_entries WHERE timestamp >= :from AND timestamp < :to ORDER BY timestamp")
     fun logsBetween(from: Long, to: Long): Flow<List<LogEntry>>
 
+    @Query("SELECT * FROM log_entries WHERE trackerId = :trackerId AND timestamp >= :from AND timestamp < :to")
+    suspend fun logsBetweenOnce(trackerId: Long, from: Long, to: Long): List<LogEntry>
+
     @Query("SELECT * FROM log_entries WHERE trackerId = :trackerId AND timestamp >= :from ORDER BY timestamp DESC")
     suspend fun logsSinceOnce(trackerId: Long, from: Long): List<LogEntry>
 
@@ -432,6 +435,24 @@ interface MoneyDao {
     // deleting one half of a transfer takes the other half with it
     @Query("DELETE FROM money_entries WHERE transferId = :transferId")
     suspend fun deleteTransfer(transferId: Long)
+
+    @Query("SELECT * FROM money_quick ORDER BY sortOrder, id")
+    fun quick(): Flow<List<MoneyQuick>>
+
+    @Query("SELECT * FROM money_quick WHERE id = :id")
+    suspend fun quickOne(id: Long): MoneyQuick?
+
+    @Upsert
+    suspend fun upsertQuick(quick: MoneyQuick): Long
+
+    @Query("DELETE FROM money_quick WHERE id = :id")
+    suspend fun deleteQuick(id: Long)
+
+    @Query("SELECT * FROM money_quick")
+    suspend fun allQuick(): List<MoneyQuick>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertQuick(quick: List<MoneyQuick>)
 
     @Query("SELECT * FROM money_accounts")
     suspend fun allAccounts(): List<MoneyAccount>

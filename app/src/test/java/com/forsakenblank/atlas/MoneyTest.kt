@@ -3,6 +3,7 @@ package com.forsakenblank.atlas
 import com.forsakenblank.atlas.data.MoneyEntry
 import com.forsakenblank.atlas.util.balanceSeries
 import com.forsakenblank.atlas.util.categoryTotals
+import com.forsakenblank.atlas.util.currentBalance
 import com.forsakenblank.atlas.util.monthlyTotals
 import com.forsakenblank.atlas.util.parsePence
 import com.forsakenblank.atlas.util.pounds
@@ -13,8 +14,8 @@ import java.time.LocalDate
 
 class MoneyTest {
 
-    private fun entry(day: LocalDate, pence: Long, category: String? = null, transfer: Long? = null) =
-        MoneyEntry(accountId = 1, day = day.toEpochDay(), amountPence = pence, category = category, transferId = transfer)
+    private fun entry(day: LocalDate, pence: Long, category: String? = null, transfer: Long? = null, past: Boolean = false) =
+        MoneyEntry(accountId = 1, day = day.toEpochDay(), amountPence = pence, category = category, transferId = transfer, historical = past)
 
     @Test
     fun amountsParseToPence() {
@@ -64,7 +65,24 @@ class MoneyTest {
     fun balanceCountsEarlierEntries() {
         val d = LocalDate.of(2026, 10, 1)
         val entries = listOf(entry(d.minusDays(5), 1_000), entry(d, -300), entry(d.plusDays(1), 500))
-        val series = balanceSeries(10_000, entries, d.toEpochDay(), d.plusDays(2).toEpochDay())
+        val series = balanceSeries(11_200, entries, d.toEpochDay(), d.plusDays(2).toEpochDay())
         assertEquals(listOf(10_700L, 11_200L, 11_200L), series.map { it.second })
+    }
+
+    @Test
+    fun pastRecordsLeaveTheBalanceAlone() {
+        val d = LocalDate.of(2026, 10, 1)
+        val entries = listOf(entry(d, -500), entry(d.minusDays(30), -2_000, past = true), entry(d.minusDays(40), 90_000, past = true))
+        assertEquals(9_500L, currentBalance(10_000, entries))
+    }
+
+    @Test
+    fun backdatedRecordsReshapeTheLineButNotToday() {
+        val d = LocalDate.of(2026, 10, 10)
+        // balance is 10,000 now, a past spend of 400 four days ago is only history
+        val entries = listOf(entry(d.minusDays(4), -400, past = true))
+        val series = balanceSeries(10_000, entries, d.minusDays(5).toEpochDay(), d.toEpochDay()).map { it.second }
+        assertEquals(10_000L, series.last())
+        assertEquals(listOf(10_400L, 10_000L, 10_000L, 10_000L, 10_000L, 10_000L), series)
     }
 }

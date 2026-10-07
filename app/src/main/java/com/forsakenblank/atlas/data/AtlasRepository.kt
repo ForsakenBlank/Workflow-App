@@ -267,6 +267,32 @@ class AtlasRepository(private val db: AtlasDatabase) {
 
     suspend fun deleteLog(id: Long) = trackers.deleteLog(id)
 
+    // something that happened on an earlier day, put at midday so it sits in the right day whatever the time zone does
+    suspend fun logPast(trackerId: Long, day: LocalDate, count: Int, value: Double, seconds: Long?, note: String?) {
+        val tracker = trackers.get(trackerId) ?: return
+        val at = day.atTime(12, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val cleanNote = note?.takeIf { it.isNotBlank() }
+        db.withTransaction {
+            when (tracker.kind) {
+                TrackerKind.COUNTER -> repeat(count.coerceIn(1, 100)) { i ->
+                    trackers.insertLog(LogEntry(trackerId = trackerId, timestamp = at + i * 60_000L, note = cleanNote))
+                }
+                // a yes or no is only ever once a day
+                TrackerKind.YES_NO -> {
+                    if (trackers.logsBetweenOnce(trackerId, day.startMillis(), day.plusDays(1).startMillis()).isEmpty()) {
+                        trackers.insertLog(LogEntry(trackerId = trackerId, timestamp = at, note = cleanNote))
+                    }
+                }
+                TrackerKind.NUMBER, TrackerKind.RATING ->
+                    trackers.insertLog(LogEntry(trackerId = trackerId, timestamp = at, value = value, note = cleanNote))
+                TrackerKind.TIMER -> {
+                    val secs = seconds ?: 0L
+                    if (secs > 0) trackers.insertLog(LogEntry(trackerId = trackerId, timestamp = at, value = secs.toDouble(), durationSeconds = secs, note = cleanNote))
+                }
+            }
+        }
+    }
+
     // calendar
 
     fun eventsBetween(from: Long, to: Long): Flow<List<Event>> = events.eventsBetween(from, to)
@@ -407,12 +433,34 @@ class AtlasRepository(private val db: AtlasDatabase) {
         if (transfer != null) money.deleteTransfer(transfer) else money.deleteEntry(entry.id)
     }
 
+    fun moneyQuick(): Flow<List<MoneyQuick>> = money.quick()
+
+    suspend fun saveMoneyQuick(quick: MoneyQuick) {
+        money.upsertQuick(quick)
+    }
+
+    suspend fun deleteMoneyQuick(id: Long) = money.deleteQuick(id)
+
+    // adds the saved entry dated today, gives back the entry id so it can be undone
+    suspend fun logMoneyQuick(id: Long): MoneyEntry? {
+        val quick = money.quickOne(id) ?: return null
+        val entry = MoneyEntry(
+            accountId = quick.accountId,
+            day = LocalDate.now().toEpochDay(),
+            amountPence = quick.amountPence,
+            category = quick.category,
+            note = quick.note,
+        )
+        val newId = money.upsertEntry(entry)
+        return entry.copy(id = newId)
+    }
+
     // two entries that cancel out, the shared id is the time so it will not clash with another transfer
-    suspend fun moneyTransfer(fromId: Long, toId: Long, day: Long, pence: Long, note: String?) {
+    suspend fun moneyTransfer(fromId: Long, toId: Long, day: Long, pence: Long, note: String?, historical: Boolean = false) {
         val link = System.nanoTime()
         db.withTransaction {
-            money.upsertEntry(MoneyEntry(accountId = fromId, day = day, amountPence = -pence, category = "Transfer", note = note, transferId = link))
-            money.upsertEntry(MoneyEntry(accountId = toId, day = day, amountPence = pence, category = "Transfer", note = note, transferId = link))
+            money.upsertEntry(MoneyEntry(accountId = fromId, day = day, amountPence = -pence, category = "Transfer", note = note, transferId = link, historical = historical))
+            money.upsertEntry(MoneyEntry(accountId = toId, day = day, amountPence = pence, category = "Transfer", note = note, transferId = link, historical = historical))
         }
     }
 
@@ -472,6 +520,7 @@ class AtlasRepository(private val db: AtlasDatabase) {
         countdowns = countdowns.allOnce(),
         moneyAccounts = money.allAccounts(),
         moneyEntries = money.allEntries(),
+        moneyQuick = money.allQuick(),
     )
 
     suspend fun restoreSnapshot(backup: Backup) {
@@ -500,6 +549,7 @@ class AtlasRepository(private val db: AtlasDatabase) {
             money.clear() // entries go with their accounts
             money.insertAccounts(backup.moneyAccounts)
             money.insertEntries(backup.moneyEntries)
+            money.insertQuick(backup.moneyQuick)
         }
     }
 
