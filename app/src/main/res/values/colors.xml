@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="atlas_background">#FFFBF7F2</color>
+    <color name="icon_orange_background">#FFD9692B</color>
+    <color name="icon_navy_background">#FF1F3A5F</color>
+    <color name="icon_mono_background">#FF111111</color>
+    <color name="icon_purple_background">#FF5B3FA0</color>
+    <color name="icon_forest_background">#FF23533A</color>
+</resources>
