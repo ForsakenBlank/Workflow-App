@@ -76,6 +76,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavBackStackEntry
+import kotlinx.coroutines.delay
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -235,6 +236,8 @@ fun AtlasRoot() {
         openedStart = true
     }
     LaunchedEffect(section) {
+        // saving rebuilds the whole theme tree, so it waits until the page change has finished
+        delay(700)
         if (section != null && settings.startSection == null && section != settings.lastSection) {
             app.updateSettings { it.copy(lastSection = section) }
         }
