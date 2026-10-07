@@ -23,6 +23,7 @@ class AtlasRepository(private val db: AtlasDatabase) {
     private val sheets = db.sheets()
     private val countdowns = db.countdowns()
     private val money = db.money()
+    private val dayNotes = db.dayNotes()
 
     // explorer
 
@@ -405,6 +406,16 @@ class AtlasRepository(private val db: AtlasDatabase) {
 
     suspend fun deleteCountdown(id: Long) = countdowns.delete(id)
 
+    // day notes
+
+    fun dayNotes(): Flow<List<DayNote>> = dayNotes.all()
+
+    // an empty note is the same as no note
+    suspend fun saveDayNote(day: Long, text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) dayNotes.delete(day) else dayNotes.upsert(DayNote(day, clean))
+    }
+
     // money
 
     fun moneyAccounts(): Flow<List<MoneyAccount>> = money.accounts()
@@ -521,6 +532,7 @@ class AtlasRepository(private val db: AtlasDatabase) {
         moneyAccounts = money.allAccounts(),
         moneyEntries = money.allEntries(),
         moneyQuick = money.allQuick(),
+        dayNotes = dayNotes.allOnce(),
     )
 
     suspend fun restoreSnapshot(backup: Backup) {
@@ -550,6 +562,8 @@ class AtlasRepository(private val db: AtlasDatabase) {
             money.insertAccounts(backup.moneyAccounts)
             money.insertEntries(backup.moneyEntries)
             money.insertQuick(backup.moneyQuick)
+            dayNotes.clear()
+            dayNotes.insertAll(backup.dayNotes)
         }
     }
 

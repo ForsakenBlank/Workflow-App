@@ -75,6 +75,7 @@ fun MoneyCharts(accounts: List<MoneyAccount>, entries: List<MoneyEntry>) {
     val current = currentBalance(accounts.sumOf { it.openingPence }, entries)
     val series = remember(entries, current, fromDay) { balanceSeries(current, entries, fromDay, today.toEpochDay()) }
     val categories = remember(entries, fromDay) { categoryTotals(entries, fromDay) }
+    val earnings = remember(entries, fromDay) { categoryTotals(entries, fromDay, earning = true) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -107,28 +108,35 @@ fun MoneyCharts(accounts: List<MoneyAccount>, entries: List<MoneyEntry>) {
             }
         }
 
-        ChartCard("Spending by category") {
-            if (categories.isEmpty()) {
-                Text("No spending in this time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                val biggest = categories.first().second.toFloat()
-                val sum = categories.sumOf { it.second }
-                categories.take(8).forEach { (name, pence) ->
-                    Column {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            Text("${pounds(pence)} · ${(pence * 100 / sum)}%", style = MaterialTheme.typography.labelMedium)
-                        }
-                        Box(
-                            Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
-                        ) {
-                            Box(Modifier.fillMaxWidth(pence / biggest).fillMaxHeight().background(Spent))
-                        }
+        CategoryCard("Spending by category", categories, Spent, "No spending in this time.")
+        CategoryCard("Earnings by category", earnings, Earned, "No earnings in this time.")
+        Box(Modifier.height(72.dp))
+    }
+}
+
+@Composable
+private fun CategoryCard(title: String, rows: List<Pair<String, Long>>, color: androidx.compose.ui.graphics.Color, empty: String) {
+    ChartCard(title) {
+        if (rows.isEmpty()) {
+            Text(empty, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            val biggest = rows.first().second.toFloat()
+            val sum = rows.sumOf { it.second }
+            Text("Total ${pounds(sum)}", style = MaterialTheme.typography.labelLarge)
+            rows.take(8).forEach { (name, pence) ->
+                Column {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        Text("${pounds(pence)} · ${(pence * 100 / sum)}%", style = MaterialTheme.typography.labelMedium)
+                    }
+                    Box(
+                        Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+                    ) {
+                        Box(Modifier.fillMaxWidth(pence / biggest).fillMaxHeight().background(color))
                     }
                 }
             }
         }
-        Box(Modifier.height(72.dp))
     }
 }
 

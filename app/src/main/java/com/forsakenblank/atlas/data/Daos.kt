@@ -469,3 +469,24 @@ interface MoneyDao {
     @Query("DELETE FROM money_accounts")
     suspend fun clear()
 }
+
+@Dao
+interface DayNoteDao {
+    @Query("SELECT * FROM day_notes")
+    fun all(): Flow<List<DayNote>>
+
+    @Upsert
+    suspend fun upsert(note: DayNote)
+
+    @Query("DELETE FROM day_notes WHERE day = :day")
+    suspend fun delete(day: Long)
+
+    @Query("SELECT * FROM day_notes")
+    suspend fun allOnce(): List<DayNote>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(notes: List<DayNote>)
+
+    @Query("DELETE FROM day_notes")
+    suspend fun clear()
+}

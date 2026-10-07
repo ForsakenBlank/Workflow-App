@@ -183,6 +183,12 @@ class MigrationTest {
         assertEquals(-350L, logged.amountPence)
         assertEquals(java.time.LocalDate.now().toEpochDay(), logged.day)
 
+        // a note on a day saves, reads back and clears when emptied
+        repo.saveDayNote(20_000, "  Dentist went fine ")
+        assertEquals("Dentist went fine", repo.snapshot().dayNotes.single().text)
+        repo.saveDayNote(20_000, "   ")
+        assertEquals(0, repo.snapshot().dayNotes.size)
+
         repo.deleteMoneyAccount(current)
         assertEquals(1, repo.snapshot().moneyAccounts.size)
         assertEquals(0, repo.snapshot().moneyQuick.size)

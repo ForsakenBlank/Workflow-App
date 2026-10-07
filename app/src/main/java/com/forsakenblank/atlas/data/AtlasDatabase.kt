@@ -45,9 +45,9 @@ class Converters {
     entities = [
         Item::class, NoteBody::class, Tracker::class, LogEntry::class, Tag::class, ItemTag::class,
         Event::class, Task::class, Subject::class, TimetableSlot::class, Term::class,
-        SheetBody::class, Countdown::class, MoneyAccount::class, MoneyEntry::class, MoneyQuick::class,
+        SheetBody::class, Countdown::class, MoneyAccount::class, MoneyEntry::class, MoneyQuick::class, DayNote::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -62,6 +62,7 @@ abstract class AtlasDatabase : RoomDatabase() {
     abstract fun sheets(): SheetDao
     abstract fun countdowns(): CountdownDao
     abstract fun money(): MoneyDao
+    abstract fun dayNotes(): DayNoteDao
 
     companion object {
         fun build(context: Context): AtlasDatabase =
@@ -158,7 +159,18 @@ abstract class AtlasDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        // version 6 adds a calendar switch on trackers and notes for single days
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `trackers` ADD COLUMN `showOnCalendar` INTEGER NOT NULL DEFAULT 1")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `day_notes` (`day` INTEGER PRIMARY KEY NOT NULL, " +
+                        "`text` TEXT NOT NULL, `updated` INTEGER NOT NULL)"
+                )
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
     }
 }
 

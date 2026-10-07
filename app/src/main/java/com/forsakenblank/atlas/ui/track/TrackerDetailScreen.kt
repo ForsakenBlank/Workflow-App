@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
@@ -97,11 +98,11 @@ class TrackerDetailViewModel(private val id: Long, private val repo: AtlasReposi
         viewModelScope.launch { repo.cancelTimer(id) }
     }
 
-    fun save(name: String, color: Int?, goal: Int?, showOnHome: Boolean, unit: String?, aggregate: Aggregate?) {
+    fun save(name: String, color: Int?, goal: Int?, showOnHome: Boolean, unit: String?, aggregate: Aggregate?, onCalendar: Boolean) {
         val current = tracker.value ?: return
         viewModelScope.launch {
             repo.rename(current.item.copy(color = color), name)
-            repo.updateTracker(current.tracker.copy(dailyGoal = goal, showOnHome = showOnHome, unit = unit, aggregate = aggregate))
+            repo.updateTracker(current.tracker.copy(dailyGoal = goal, showOnHome = showOnHome, unit = unit, aggregate = aggregate, showOnCalendar = onCalendar))
         }
     }
 
@@ -139,6 +140,8 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
     var logging by remember { mutableStateOf(false) }
     var loggingPast by remember { mutableStateOf(false) }
     var range by rememberSaveable { mutableStateOf(StatRange.WEEK) }
+    // timers show minutes first, a tap on the total goes on to hours, then days, then round again
+    var timeUnit by rememberSaveable { mutableStateOf(TimeUnitView.MINUTES) }
     var confirmDelete by remember { mutableStateOf<LogEntry?>(null) }
 
     Scaffold(
@@ -187,9 +190,11 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
         val start = range.days?.let { today.minusDays(it - 1L) } ?: minOf(firstDay, today)
         val inRange = byDay.filterKeys { it >= start }
         val rangeValues = inRange.mapNotNull { (_, dayLogs) -> dayValue(t.tracker, dayLogs) }
-        val rangeLabel = if (averages) "Average, ${range.label.lowercase()}" else "Total, ${range.label.lowercase()}"
+        val rangeLabel = (if (averages) "Average, ${range.label.lowercase()}" else "Total, ${range.label.lowercase()}") +
+            if (kind == TrackerKind.TIMER) " (tap to change unit)" else ""
         val rangeStat = when {
             rangeValues.isEmpty() -> "None"
+            kind == TrackerKind.TIMER -> timeUnit.format(rangeValues.sum())
             averages -> "${formatNumber(rangeValues.average())} $unitLabel".trim()
             else -> "${formatNumber(rangeValues.sum())} $unitLabel".trim()
         }
@@ -262,7 +267,12 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
             }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatCard(rangeLabel, rangeStat, Modifier.weight(1f))
+                    StatCard(
+                        rangeLabel,
+                        rangeStat,
+                        Modifier.weight(1f),
+                        onClick = if (kind == TrackerKind.TIMER) ({ timeUnit = timeUnit.next() }) else null,
+                    )
                     StatCard("Days logged", "${inRange.size}", Modifier.weight(1f))
                 }
             }
@@ -321,8 +331,8 @@ fun TrackerDetailScreen(id: Long, navigator: AtlasNavigator) {
         EditTrackerDialog(
             tracker = t,
             onDismiss = { editing = false },
-            onSave = { name, color, goal, home, unit, aggregate ->
-                vm.save(name, color, goal, home, unit, aggregate)
+            onSave = { name, color, goal, home, unit, aggregate, onCalendar ->
+                vm.save(name, color, goal, home, unit, aggregate, onCalendar)
                 editing = false
             },
         )
@@ -368,9 +378,23 @@ private enum class StatRange(val label: String, val days: Int?) {
     ALL("All time", null),
 }
 
+// the unit a timer total is shown in
+private enum class TimeUnitView {
+    MINUTES, HOURS, DAYS;
+
+    fun next() = entries[(ordinal + 1) % entries.size]
+
+    // the total comes in as minutes
+    fun format(minutes: Double): String = when (this) {
+        MINUTES -> "${formatNumber(minutes)} min"
+        HOURS -> "${formatNumber(minutes / 60.0)} h"
+        DAYS -> "${formatNumber(minutes / 1440.0)} d"
+    }
+}
+
 @Composable
-private fun StatCard(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+private fun StatCard(label: String, value: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    Card(modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(16.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
@@ -406,7 +430,7 @@ private fun BarChart(values: List<Float>, color: Color, goal: Float?) {
 private fun EditTrackerDialog(
     tracker: TrackerWithItem,
     onDismiss: () -> Unit,
-    onSave: (String, Int?, Int?, Boolean, String?, Aggregate?) -> Unit,
+    onSave: (String, Int?, Int?, Boolean, String?, Aggregate?, Boolean) -> Unit,
 ) {
     val kind = tracker.tracker.kind
     var name by remember { mutableStateOf(tracker.item.name) }
@@ -415,6 +439,7 @@ private fun EditTrackerDialog(
     var unit by remember { mutableStateOf(tracker.tracker.unit.orEmpty()) }
     var aggregate by remember { mutableStateOf(tracker.tracker.aggregate ?: Aggregate.SUM) }
     var showOnHome by remember { mutableStateOf(tracker.tracker.showOnHome) }
+    var showOnCalendar by remember { mutableStateOf(tracker.tracker.showOnCalendar) }
     val hasGoal = kind == TrackerKind.COUNTER || kind == TrackerKind.TIMER || kind == TrackerKind.NUMBER
     val hasUnit = kind == TrackerKind.COUNTER || kind == TrackerKind.NUMBER
 
@@ -448,6 +473,17 @@ private fun EditTrackerDialog(
                     Text("Show on Home", modifier = Modifier.weight(1f))
                     Switch(checked = showOnHome, onCheckedChange = { showOnHome = it })
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Show on the calendar")
+                        Text(
+                            "Off keeps it off the day cells, the full day view still lists it",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = showOnCalendar, onCheckedChange = { showOnCalendar = it })
+                }
             }
         },
         confirmButton = {
@@ -461,6 +497,7 @@ private fun EditTrackerDialog(
                         showOnHome,
                         unit.trim().takeIf { it.isNotEmpty() && hasUnit },
                         if (kind == TrackerKind.NUMBER) aggregate else null,
+                        showOnCalendar,
                     )
                 },
             ) { Text("Save") }

@@ -70,6 +70,8 @@ data class Tracker(
     val showOnHome: Boolean = true,
     val runningSince: Long? = null, // timer start, kept in the db so it survives the app closing
     val aggregate: Aggregate? = null, // only used by number trackers, null means sum
+    // off keeps its logs off the calendar cells, the full day popup still lists them
+    @ColumnInfo(defaultValue = "1") val showOnCalendar: Boolean = true,
 )
 
 @Serializable
@@ -249,4 +251,13 @@ data class MoneyQuick(
     val category: String? = null,
     val note: String? = null,
     val sortOrder: Int = 0,
+)
+
+// a few words about one day, shown on the calendar and in the full day popup
+@Serializable
+@Entity(tableName = "day_notes")
+data class DayNote(
+    @PrimaryKey val day: Long, // epoch day
+    val text: String,
+    val updated: Long = System.currentTimeMillis(),
 )

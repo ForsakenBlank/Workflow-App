@@ -5,6 +5,7 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.YearMonth
+import kotlin.math.abs
 
 const val DAY_MS = 86_400_000L
 
@@ -50,12 +51,12 @@ fun monthlyTotals(entries: List<MoneyEntry>, months: Int, today: LocalDate = Loc
     }
 }
 
-// where the spending went from a day onwards, biggest first
-fun categoryTotals(entries: List<MoneyEntry>, fromDay: Long): List<Pair<String, Long>> =
+// where the spending (or the earnings) came from since a day, biggest first
+fun categoryTotals(entries: List<MoneyEntry>, fromDay: Long, earning: Boolean = false): List<Pair<String, Long>> =
     entries.real()
-        .filter { it.amountPence < 0 && it.day >= fromDay }
+        .filter { (if (earning) it.amountPence > 0 else it.amountPence < 0) && it.day >= fromDay }
         .groupBy { it.category?.takeIf { c -> c.isNotBlank() } ?: "Other" }
-        .map { (name, list) -> name to -list.sumOf { it.amountPence } }
+        .map { (name, list) -> name to abs(list.sumOf { it.amountPence }) }
         .sortedByDescending { it.second }
 
 // the total across every account at the end of each day, worked backwards from what it is today

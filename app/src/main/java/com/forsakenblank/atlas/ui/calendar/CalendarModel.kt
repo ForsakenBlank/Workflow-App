@@ -4,8 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.forsakenblank.atlas.data.AtlasRepository
 import com.forsakenblank.atlas.data.Countdown
+import com.forsakenblank.atlas.data.DayNote
 import com.forsakenblank.atlas.data.Event
 import com.forsakenblank.atlas.data.LogEntry
+import com.forsakenblank.atlas.data.MoneyAccount
+import com.forsakenblank.atlas.data.MoneyEntry
 import com.forsakenblank.atlas.data.Repeat
 import com.forsakenblank.atlas.data.Subject
 import com.forsakenblank.atlas.data.Task
@@ -34,6 +37,9 @@ data class CalendarData(
     val slots: List<TimetableSlot> = emptyList(),
     val terms: List<Term> = emptyList(),
     val countdowns: List<Countdown> = emptyList(),
+    val dayNotes: List<DayNote> = emptyList(),
+    val money: List<MoneyEntry> = emptyList(),
+    val accounts: List<MoneyAccount> = emptyList(),
 ) {
     private val logsByDay = logs.groupBy { it.timestamp.toLocalDate() }
     private val tasksByDay = tasks.filter { it.due != null }.groupBy { it.due!!.toLocalDate() }
@@ -52,22 +58,46 @@ data class CalendarData(
 
     fun countdownsOn(day: LocalDate): List<Countdown> = countdowns.filter { it.showOnCalendar && it.occursOn(day) }
 
+    private val notesByDay = dayNotes.associateBy { it.day }
+    private val moneyByDay = money.groupBy { it.day }
+    private val onCalendar = trackers.filter { it.tracker.showOnCalendar }.map { it.item.id }.toSet()
+
+    // everything logged that day, the full day popup uses this
     fun logsOn(day: LocalDate): List<LogEntry> = logsByDay[day].orEmpty()
+
+    // only trackers that are switched on for the calendar, these are the dots and the short line
+    fun calendarLogsOn(day: LocalDate): List<LogEntry> = logsOn(day).filter { it.trackerId in onCalendar }
+
+    fun noteOn(day: LocalDate): String? = notesByDay[day.toEpochDay()]?.text
+
+    fun moneyOn(day: LocalDate): List<MoneyEntry> = moneyByDay[day.toEpochDay()].orEmpty()
 
     fun subject(id: Long?): Subject? = id?.let { wanted -> subjects.firstOrNull { it.id == wanted } }
 }
 
 data class Range(val from: LocalDate, val to: LocalDate)
 
-private class Extras(val subjects: List<Subject>, val slots: List<TimetableSlot>, val terms: List<Term>, val countdowns: List<Countdown>)
+private data class Extras(
+    val subjects: List<Subject>,
+    val slots: List<TimetableSlot>,
+    val terms: List<Term>,
+    val countdowns: List<Countdown>,
+    val dayNotes: List<DayNote> = emptyList(),
+    val money: List<MoneyEntry> = emptyList(),
+    val accounts: List<MoneyAccount> = emptyList(),
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CalendarViewModel(private val repo: AtlasRepository) : ViewModel() {
 
     val range = MutableStateFlow(Range(LocalDate.now().minusDays(45), LocalDate.now().plusDays(75)))
 
-    private val timetable = combine(repo.subjects(), repo.slots(), repo.terms(), repo.countdowns()) { subjects, slots, terms, countdowns ->
+    private val planning = combine(repo.subjects(), repo.slots(), repo.terms(), repo.countdowns()) { subjects, slots, terms, countdowns ->
         Extras(subjects, slots, terms, countdowns)
+    }
+
+    private val timetable = combine(planning, repo.dayNotes(), repo.moneyEntries(), repo.moneyAccounts()) { base, notes, money, accounts ->
+        base.copy(dayNotes = notes, money = money, accounts = accounts)
     }
 
     val data = range.flatMapLatest { r ->
@@ -80,7 +110,10 @@ class CalendarViewModel(private val repo: AtlasRepository) : ViewModel() {
             repo.trackers(),
             timetable,
         ) { events, tasks, logs, trackers, extras ->
-            CalendarData(events, tasks, logs, trackers, extras.subjects, extras.slots, extras.terms, extras.countdowns)
+            CalendarData(
+                events, tasks, logs, trackers, extras.subjects, extras.slots, extras.terms, extras.countdowns,
+                extras.dayNotes, extras.money, extras.accounts,
+            )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CalendarData())
 
@@ -89,6 +122,10 @@ class CalendarViewModel(private val repo: AtlasRepository) : ViewModel() {
         val current = range.value
         if (from >= current.from && to <= current.to) return
         range.value = Range(minOf(from, LocalDate.now()).minusDays(14), maxOf(to, LocalDate.now().plusDays(60)).plusDays(14))
+    }
+
+    fun saveNote(day: LocalDate, text: String) {
+        viewModelScope.launch { repo.saveDayNote(day.toEpochDay(), text) }
     }
 
     fun setTaskDone(task: Task, done: Boolean) {

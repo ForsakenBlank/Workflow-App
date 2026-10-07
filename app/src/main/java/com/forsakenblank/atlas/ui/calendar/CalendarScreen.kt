@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.Cake
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.Notes
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.School
@@ -102,6 +103,7 @@ private fun LocalDate.weekStart(first: DayOfWeek): LocalDate = with(TemporalAdju
 
 private sealed interface CalendarDialog {
     data class EditTask(val task: Task?, val day: LocalDate) : CalendarDialog
+    data class Details(val day: LocalDate) : CalendarDialog
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -253,11 +255,20 @@ fun CalendarScreen(navigator: AtlasNavigator) {
             initialDue = if (d.task == null) d.day.startMillis() else null,
             onDismiss = { dialog = null },
         )
+        is CalendarDialog.Details -> DayDetailsSheet(
+            day = d.day,
+            data = data,
+            settings = settings,
+            navigator = navigator,
+            vm = vm,
+            onEditTask = { task -> dialog = CalendarDialog.EditTask(task, d.day) },
+            onDismiss = { dialog = null },
+        )
     }
 }
 
 private fun hasAnything(day: LocalDate, data: CalendarData, settings: AppSettings): Boolean =
-    data.eventsOn(day).isNotEmpty() || data.countdownsOn(day).isNotEmpty() ||
+    data.noteOn(day) != null || data.eventsOn(day).isNotEmpty() || data.countdownsOn(day).isNotEmpty() ||
         (settings.showTasksOnCalendar && (data.tasksOn(day).isNotEmpty() || data.repeatsOn(day).isNotEmpty()))
 
 @Composable
@@ -329,11 +340,13 @@ private fun DayCell(
     val colors = MaterialTheme.colorScheme
     val events = data.eventsOn(day)
     val tasks = if (settings.showTasksOnCalendar) data.tasksOn(day).filter { !it.done } + data.repeatsOn(day) else emptyList()
-    val logged = settings.showTrackerDots && data.logsOn(day).isNotEmpty()
+    val logged = settings.showTrackerDots && data.calendarLogsOn(day).isNotEmpty()
+    val noted = data.noteOn(day) != null
     val dots = data.countdownsOn(day).take(2).map { it.color.toItemColor(colors.tertiary) } +
         events.take(3).map { it.color.toItemColor(colors.primary) } +
         (if (tasks.isNotEmpty()) listOf(colors.secondary) else emptyList()) +
-        (if (logged) listOf(colors.tertiary) else emptyList())
+        (if (logged) listOf(colors.tertiary) else emptyList()) +
+        (if (noted) listOf(colors.outline) else emptyList())
 
     Column(
         modifier = modifier
@@ -385,18 +398,36 @@ private fun LazyListScope.dayContents(
     val classes = if (settings.showClassesOnCalendar) classesOn(day, data.slots, data.subjects, data.terms, settings) else emptyList()
     val tasks = if (settings.showTasksOnCalendar) data.tasksOn(day) else emptyList()
     val repeats = if (settings.showTasksOnCalendar) data.repeatsOn(day) else emptyList()
-    val logs = if (settings.showTrackerDots) data.logsOn(day) else emptyList()
+    val logs = if (settings.showTrackerDots) data.calendarLogsOn(day) else emptyList()
+    val note = data.noteOn(day)
     val empty = events.isEmpty() && countdowns.isEmpty() && classes.isEmpty() && tasks.isEmpty() && repeats.isEmpty() && logs.isEmpty()
 
     if (header) {
         item(key = "header-$day") {
             val today = day == LocalDate.now()
-            Text(
-                if (today) "Today, ${day.format(DateTimeFormatter.ofPattern("d MMMM"))}" else day.format(dayTitle),
-                style = MaterialTheme.typography.titleSmall,
-                color = if (today) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(top = 16.dp, bottom = 6.dp),
-            )
+            Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (today) "Today, ${day.format(DateTimeFormatter.ofPattern("d MMMM"))}" else day.format(dayTitle),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (today) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { onDialog(CalendarDialog.Details(day)) }) { Text("Full day") }
+            }
+        }
+    }
+    if (note != null) {
+        item(key = "note-$day") {
+            Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
+                Icon(Icons.Outlined.Notes, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(18.dp))
+                Text(
+                    note,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
         }
     }
     if (empty) {
@@ -458,7 +489,7 @@ private fun LazyListScope.dayContents(
 }
 
 @Composable
-private fun EventRow(event: Event, settings: AppSettings, onClick: () -> Unit) {
+internal fun EventRow(event: Event, settings: AppSettings, onClick: () -> Unit) {
     val accent = event.color.toItemColor(MaterialTheme.colorScheme.primary)
     AtlasCard(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), onClick = onClick) {
         Row(Modifier.height(IntrinsicSize.Min)) {
@@ -485,7 +516,7 @@ private fun EventRow(event: Event, settings: AppSettings, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CountdownRow(countdown: Countdown, day: LocalDate, onClick: () -> Unit) {
+internal fun CountdownRow(countdown: Countdown, day: LocalDate, onClick: () -> Unit) {
     val accent = countdown.color.toItemColor(MaterialTheme.colorScheme.tertiary)
     Row(
         Modifier
@@ -512,7 +543,7 @@ private fun CountdownRow(countdown: Countdown, day: LocalDate, onClick: () -> Un
 
 // a later date of a repeating task, it turns into a real task once the current one is ticked off
 @Composable
-private fun RepeatPreviewRow(task: Task, onClick: () -> Unit) {
+internal fun RepeatPreviewRow(task: Task, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -534,7 +565,7 @@ private fun RepeatPreviewRow(task: Task, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ClassRow(c: ClassSlot, settings: AppSettings, onClick: () -> Unit) {
+internal fun ClassRow(c: ClassSlot, settings: AppSettings, onClick: () -> Unit) {
     val accent = c.subject.color.toItemColor(MaterialTheme.colorScheme.secondary)
     Row(
         Modifier

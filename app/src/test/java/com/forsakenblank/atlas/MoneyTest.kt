@@ -62,6 +62,17 @@ class MoneyTest {
     }
 
     @Test
+    fun earningsGroupByCategoryToo() {
+        val day = LocalDate.of(2026, 10, 1)
+        val list = categoryTotals(
+            listOf(entry(day, 5000, "Wages"), entry(day, 1500, "Gift"), entry(day, 2500, "Wages"), entry(day, -900, "Food"), entry(day, 700, transfer = 4)),
+            fromDay = 0,
+            earning = true,
+        )
+        assertEquals(listOf("Wages" to 7_500L, "Gift" to 1_500L), list)
+    }
+
+    @Test
     fun balanceCountsEarlierEntries() {
         val d = LocalDate.of(2026, 10, 1)
         val entries = listOf(entry(d.minusDays(5), 1_000), entry(d, -300), entry(d.plusDays(1), 500))
