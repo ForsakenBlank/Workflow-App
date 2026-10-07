@@ -13,6 +13,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -51,6 +52,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
@@ -184,15 +186,14 @@ private class Motion(private val settings: () -> AppSettings) {
     // switching tabs should never leave the old tab sitting there, so it is gone in a frame
     // and the new one fades or slides in on its own
     private fun isTabSwitch(scope: AnimatedContentTransitionScope<NavBackStackEntry>): Boolean {
-        val tabs = settings().visibleTabs()
         val from = Section.fromRoute(scope.initialState.destination.route)
         val to = Section.fromRoute(scope.targetState.destination.route)
-        return from != null && to != null && from in tabs && to in tabs
+        return from != null && to != null
     }
 
     fun enter(scope: AnimatedContentTransitionScope<NavBackStackEntry>, pop: Boolean): EnterTransition {
         val (t, ms, forward) = pick(scope, pop)
-        if (isTabSwitch(scope) && t != Transition.SLIDE && t != Transition.NONE) {
+        if (isTabSwitch(scope) && t != Transition.NONE) {
             return fadeIn(tween((ms * 0.5f).toInt().coerceIn(60, 220)))
         }
         return enterFor(t, ms, forward)
@@ -200,7 +201,7 @@ private class Motion(private val settings: () -> AppSettings) {
 
     fun exit(scope: AnimatedContentTransitionScope<NavBackStackEntry>, pop: Boolean): ExitTransition {
         val (t, ms, forward) = pick(scope, pop)
-        if (isTabSwitch(scope) && t != Transition.SLIDE && t != Transition.NONE) return fadeOut(tween(1))
+        if (isTabSwitch(scope) && t != Transition.NONE) return fadeOut(tween(1))
         return exitFor(t, ms, forward)
     }
 }
@@ -304,19 +305,19 @@ fun AtlasRoot() {
                 popEnterTransition = { motion.enter(this, pop = true) },
                 popExitTransition = { motion.exit(this, pop = true) },
             ) {
-                composable(Section.HOME.route) { HomeScreen(navigator) }
-                composable(Section.NOTES.route) { NotesScreen(navigator) }
-                composable(Section.SHEETS.route) { SheetsScreen(navigator) }
-                composable(Section.CALENDAR.route) { CalendarScreen(navigator) }
-                composable(Section.TIMETABLE.route) { TimetableScreen(navigator) }
-                composable(Section.TASKS.route) { TasksScreen(navigator) }
-                composable(Section.COUNTDOWNS.route) { CountdownsScreen(navigator) }
-                composable(Section.MONEY.route) { MoneyScreen(navigator) }
-                composable(Routes.TAX) { TaxScreen(navigator) }
-                composable(Section.TRACK.route) { TrackScreen(navigator) }
-                composable(Section.FOCUS.route) { FocusScreen(navigator) }
-                composable(Section.TOOLS.route) { ToolsScreen(navigator) }
-                composable(Section.EXPLORER.route) { ExplorerScreen(navigator) }
+                composable(Section.HOME.route) { Page { HomeScreen(navigator) } }
+                composable(Section.NOTES.route) { Page { NotesScreen(navigator) } }
+                composable(Section.SHEETS.route) { Page { SheetsScreen(navigator) } }
+                composable(Section.CALENDAR.route) { Page { CalendarScreen(navigator) } }
+                composable(Section.TIMETABLE.route) { Page { TimetableScreen(navigator) } }
+                composable(Section.TASKS.route) { Page { TasksScreen(navigator) } }
+                composable(Section.COUNTDOWNS.route) { Page { CountdownsScreen(navigator) } }
+                composable(Section.MONEY.route) { Page { MoneyScreen(navigator) } }
+                composable(Routes.TAX) { Page { TaxScreen(navigator) } }
+                composable(Section.TRACK.route) { Page { TrackScreen(navigator) } }
+                composable(Section.FOCUS.route) { Page { FocusScreen(navigator) } }
+                composable(Section.TOOLS.route) { Page { ToolsScreen(navigator) } }
+                composable(Section.EXPLORER.route) { Page { ExplorerScreen(navigator) } }
 
                 composable(Routes.NOTE, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
                     NoteEditorScreen(entry.arguments!!.getLong("id"), navigator)
@@ -385,6 +386,12 @@ fun AtlasRoot() {
             }
         }
     }
+}
+
+// tab pages have no scaffold of their own, without a solid back the old page shows through the new one
+@Composable
+private fun Page(content: @Composable () -> Unit) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { content() }
 }
 
 @Composable
