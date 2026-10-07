@@ -1,0 +1,66 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Name the APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk atlas.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atlas-apk
+          path: atlas.apk
+
+      # the apk is uploaded first so a failing test never hides a build you can try
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Keep test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
+
+      # every branch gets a release page so the apk can be installed straight from a phone,
+      # artifact downloads need a github login and come out as a zip
+      - name: Publish the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_NAME" = "main" ]; then
+            tag=latest
+            title="Atlas latest build"
+          else
+            tag="build-$(echo "$REF_NAME" | tr '/' '-')"
+            title="Atlas build from $REF_NAME"
+          fi
+          gh release delete "$tag" --yes --cleanup-tag || true
+          gh release create "$tag" atlas.apk \
+            --title "$title" \
+            --notes "Built from ${GITHUB_SHA::7}. Open this page on your phone and tap atlas.apk to install." \
+            --prerelease
